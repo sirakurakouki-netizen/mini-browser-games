@@ -1522,16 +1522,24 @@
   });
   if (new URLSearchParams(location.search).has("debug")) {
     window.__starClusterMultiplayerDebug = Object.freeze({
-      snapshot: () => ({
-        protocol: PROTOCOL_VERSION,
-        targetRenderFps,
-        displayRefresh,
-        inputHz: Math.round(1000 / INPUT_INTERVAL_MS),
-        settings: { ...gameSettings },
-        view: state.view,
-        measuredFps: Math.round(state.smoothedFps),
-        synchronization: state.snapshotBuffer.getStats()
-      })
+      snapshot: () => {
+        const snapshot = state.snapshotBuffer.sample(performance.now()) || state.latestSnapshot;
+        const groups = snapshot?.groups || [];
+        return {
+          protocol: PROTOCOL_VERSION,
+          targetRenderFps,
+          displayRefresh,
+          inputHz: Math.round(1000 / INPUT_INTERVAL_MS),
+          settings: { ...gameSettings },
+          view: state.view,
+          measuredFps: Math.round(state.smoothedFps),
+          synchronization: state.snapshotBuffer.getStats(),
+          world: snapshot?.world || null,
+          foodCount: snapshot?.foods?.length || 0,
+          leaderMass: groups.reduce((maximum, group) => Math.max(maximum, Number(group.mass) || 0), 0),
+          totalKills: groups.reduce((total, group) => total + (Number(group.kills) || 0), 0)
+        };
+      }
     });
   }
   loadModes();

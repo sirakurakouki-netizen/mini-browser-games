@@ -1,5 +1,7 @@
 # Star Cluster Arena（星团大作战）
 
+> 当前开发版本：`v3.7.0-beta.2`。联机功能处于测试阶段；食点生成、移动、碰刺/孢子和喂刺规则已使用共享内核，AI、完整随机事件与安全区阶段仍在逐项迁移。稳定成品仍保留在 `star-cluster-arena-desktop/v3.6.0/`。
+
 一个支持单机、局域网联机和 Windows 桌面封装的吞噬竞技游戏。原有 10 种单机玩法保持不变；局域网版同样开放全部 10 种玩法，支持 2–8 名真人、按单机模式目标人数自动补 AI、房间内改模式、准备、断线重连和服务端权威同步。
 
 项目位于 [wangzifan396-wzf/mini-browser-games](https://github.com/wangzifan396-wzf/mini-browser-games) 仓库的 `star-cluster-arena/` 目录。
@@ -26,7 +28,18 @@ npm.cmd start
 - 如果大厅显示“防火墙阻止”，请点击“打开防火墙设置”，删除旧的阻止规则或允许当前版本使用专用网络。程序不会静默修改系统规则。
 - 路由器开启 AP/客户端隔离、双方不在同一子网或 Windows 网络被设为“公用”时，纯局域网发现仍可能被系统阻止。
 
-详细流程与验收标准见 [`docs/SDD-LAN-STABILITY-V3.1.md`](docs/SDD-LAN-STABILITY-V3.1.md)、[`docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md`](docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md)、[`docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md`](docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md)、[`docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md`](docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md)、[`docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md`](docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md) 和 [`docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md`](docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md)。
+详细流程与验收标准见 [`docs/SDD-LAN-STABILITY-V3.1.md`](docs/SDD-LAN-STABILITY-V3.1.md)、[`docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md`](docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md)、[`docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md`](docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md)、[`docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md`](docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md)、[`docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md`](docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md)、[`docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md`](docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md) 和 [`docs/SDD-PLAYABILITY-PARITY-BETA-V3.7.md`](docs/SDD-PLAYABILITY-PARITY-BETA-V3.7.md)。
+
+### v3.7.0-beta.2 显示与联机资源节奏修复
+
+- 修复沙箱模式下桌面预加载脚本无法执行的问题；首页全屏、设置全屏、退出、复制和外部链接重新接通 Electron 主进程；
+- 全屏测试改为真实点击首页按钮和设置表单，分别验证进入/退出，不再用直接调用底层接口代替 UI 测试；
+- Electron 显示模式现在等待原生窗口确认后才反馈成功，设置切换不再与页面重载竞争；
+- “窗口大小”和“渲染清晰度”已拆分说明，并显示实际内部渲染尺寸与倍率；无边框全屏覆盖当前显示器；
+- 对局中不再周期性重建 Canvas 后备缓冲，降低偶发白闪风险；
+- 单机与服务端共同使用食点目标、每秒刷新率和有界刷新储备池，服务端不再按吞食速度瞬间补满；
+- 单机、服务端与预测器共同使用 7600 × 7600 世界；联机恢复复活护盾并补入 AI 的逃跑、觅食与条件分裂，修复一分钟内异常霸屏；
+- 联机仍保留测试标签：AI、完整随机事件和多阶段安全区尚待后续共享化。
 
 ### v3.6 共享玩法内核与正式桌面发行
 
@@ -73,10 +86,10 @@ npm.cmd run desktop
 npm.cmd run make:desktop
 ```
 
-最终成品固定输出到仓库顶层的 `star-cluster-arena-desktop/v3.6.0/`，其中：
+每个版本输出到独立目录。本次测试成品位于仓库顶层的 `star-cluster-arena-desktop/v3.7.0-beta.2/`，`v3.6.0/` 继续作为稳定版保留，其中：
 
-- `星团大作战-安装程序-3.6.0-win-x64.exe`：引导式安装，可选择安装位置，安装后从桌面或开始菜单启动游戏。
-- `星团大作战-便携版-3.6.0-win-x64.zip`：解压后双击目录内的 `StarClusterArena.exe`，不能只把 EXE 单独拷走。
+- `星团大作战-安装程序-3.7.0-beta.2-win-x64.exe`：引导式安装，可选择安装位置，安装后从桌面或开始菜单启动游戏。
+- `星团大作战-便携版-3.7.0-beta.2-win-x64.zip`：解压后双击目录内的 `StarClusterArena.exe`，不能只把 EXE 单独拷走。
 - `SHA256SUMS.txt`：安装版和便携版的 SHA-256 校验值。
 
 源码检查与测试：
@@ -85,6 +98,7 @@ npm.cmd run make:desktop
 npm.cmd run check
 npm.cmd test
 npm.cmd run test:soak
+npm.cmd run test:desktop-display
 npm.cmd run test:desktop-perf
 npm.cmd run test:desktop-multiplayer-perf
 ```

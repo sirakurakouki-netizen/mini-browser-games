@@ -40,6 +40,56 @@ test("split threshold and impulse are shared constants", () => {
   close(launch.vy, -2);
 });
 
+test("single, authoritative server and predictor share the 7600 world size", () => {
+  assert.equal(core.WORLD_RULES.size, 7600);
+  assert.equal(SIMULATION_CONSTANTS.WORLD_SIZE, core.WORLD_RULES.size);
+});
+
+test("single and authoritative sessions share bounded food pacing", () => {
+  const config = { foodTargetScale: 1.06, foodRateScale: 1.08 };
+  assert.equal(core.foodTargetCount({ config, elapsedSeconds: 60, phase: 1 }), 2493);
+  close(core.foodSpawnRate({ config, elapsedSeconds: 60, phase: 1 }), 57.672);
+
+  let bank = 0;
+  let generated = 0;
+  for (let tick = 0; tick < 60 * 30; tick += 1) {
+    const spawn = core.advanceFoodSpawnBank({
+      bank,
+      dt: 1 / 30,
+      rate: core.foodSpawnRate({ config, elapsedSeconds: tick / 30, phase: 1 }),
+      shortage: 100_000
+    });
+    bank = spawn.bank;
+    generated += spawn.count;
+  }
+  assert.ok(generated > 2_000 && generated < 3_500, `unexpected one-minute food production: ${generated}`);
+  assert.ok(bank >= 0 && bank < 1);
+});
+
+test("authoritative food loss is replenished by time budget instead of instant refill", () => {
+  const simulation = new AuthoritativeSimulation({
+    players: [{ id: "player-a", name: "甲" }],
+    botCount: 0,
+    seed: 7788,
+    now: 30_000,
+    mode: "solo"
+  });
+  const target = simulation.foods.length;
+  for (const food of [...simulation.foods].slice(0, 1_000)) simulation.removeFood(food, { track: false });
+  assert.equal(simulation.foods.length, target - 1_000);
+
+  simulation.step(30_000 + SIMULATION_CONSTANTS.STEP_SECONDS * 1_000);
+  assert.ok(simulation.foods.length <= target - 998, "one server tick must not refill the whole food deficit");
+  assert.ok(simulation.foodSpawnBank >= 0 && simulation.foodSpawnBank < 1);
+});
+
+test("a full field preserves only the bounded unused spawn budget", () => {
+  const full = core.advanceFoodSpawnBank({ bank: 7.5, dt: 1 / 30, rate: 220, shortage: 0 });
+  assert.deepEqual(full, { count: 0, bank: 7.5 });
+  const bounded = core.advanceFoodSpawnBank({ bank: 999, dt: 1 / 30, rate: 220, shortage: 0 });
+  assert.deepEqual(bounded, { count: 0, bank: core.FOOD_RULES.maximumSpawnBank });
+});
+
 test("virus split, spore burst and pickup plans are shared canonical rules", () => {
   const humanSplit = core.virusSplitPlan({
     cellMass: 1_000,

@@ -27,6 +27,10 @@
     demon: 1
   });
 
+  const WORLD_RULES = Object.freeze({
+    size: 7600
+  });
+
   const VIRUS_RULES = Object.freeze({
     smallMassMultiplier: 1.08,
     bigMassMultiplier: 1.02,
@@ -75,6 +79,19 @@
     launchedDragPer60Hz: 0.985
   });
 
+  const FOOD_RULES = Object.freeze({
+    baseCount: 2100,
+    maximumCount: 3600,
+    baseSpawnPerSecond: 24,
+    elapsedTargetPerSecond: 4.2,
+    elapsedSpawnPerSecond: 0.34,
+    phaseTargetBonus: 185,
+    phaseSpawnBonus: 9,
+    maximumSpawnPerSecond: 220,
+    maximumSpawnPerStep: 18,
+    maximumSpawnBank: 36
+  });
+
   function finite(value, fallback = 0) {
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
@@ -97,6 +114,64 @@
     const minimum = minimumBase * eventMultiplier * modeMultiplier;
     const maximum = Math.max(minimum + 0.8, maximumBase * eventMultiplier * modeMultiplier);
     return clamp((22 + Math.max(0, finite(mass)) * 0.012) * scale * eventMultiplier * modeMultiplier, minimum, maximum);
+  }
+
+  function foodTargetCount(options = {}) {
+    const config = options.config && typeof options.config === "object" ? options.config : {};
+    const elapsedSeconds = Math.max(0, finite(options.elapsedSeconds));
+    const phase = Math.max(1, finite(options.phase, 1));
+    const baseCount = Math.max(1, finite(options.baseCount, FOOD_RULES.baseCount));
+    const maximumCount = Math.max(baseCount, finite(options.maximumCount, FOOD_RULES.maximumCount));
+    const scale = Math.max(0.1, finite(config.foodTargetScale, finite(config.foodScale, 1)));
+    const phaseBonus = Math.max(0, phase - 1) * FOOD_RULES.phaseTargetBonus;
+    const warmup = Math.max(0, finite(config.dominationWarmup, 55));
+    const lateRamp = config.lateFoodRamp
+      ? Math.max(0, elapsedSeconds - warmup) * Math.max(0, finite(config.lateFoodRamp)) * 5
+      : 0;
+    const target = baseCount + elapsedSeconds * FOOD_RULES.elapsedTargetPerSecond + phaseBonus + lateRamp;
+    const eventMultiplier = Math.max(0, finite(options.eventTargetMultiplier, 1));
+    return Math.floor(clamp(
+      target * eventMultiplier * scale,
+      baseCount * Math.min(1, scale),
+      maximumCount * Math.max(1, scale)
+    ));
+  }
+
+  function foodSpawnRate(options = {}) {
+    const config = options.config && typeof options.config === "object" ? options.config : {};
+    const elapsedSeconds = Math.max(0, finite(options.elapsedSeconds));
+    const phase = Math.max(1, finite(options.phase, 1));
+    const scale = Math.max(0.1, finite(config.foodRateScale, 1));
+    const warmup = Math.max(0, finite(config.dominationWarmup, 55));
+    const lateRamp = config.lateFoodRamp
+      ? Math.max(0, elapsedSeconds - warmup) * Math.max(0, finite(config.lateFoodRamp)) * 0.18
+      : 0;
+    const eventMultiplier = Math.max(0, finite(options.eventRateMultiplier, 1));
+    return clamp(
+      (FOOD_RULES.baseSpawnPerSecond
+        + elapsedSeconds * FOOD_RULES.elapsedSpawnPerSecond
+        + lateRamp
+        + phase * FOOD_RULES.phaseSpawnBonus) * eventMultiplier * scale,
+      FOOD_RULES.baseSpawnPerSecond,
+      FOOD_RULES.maximumSpawnPerSecond
+    );
+  }
+
+  function advanceFoodSpawnBank(options = {}) {
+    const shortage = Math.max(0, Math.floor(finite(options.shortage)));
+    if (!shortage) return Object.freeze({
+      count: 0,
+      bank: Math.min(FOOD_RULES.maximumSpawnBank, Math.max(0, finite(options.bank)))
+    });
+    const dt = clamp(finite(options.dt), 0, 0.1);
+    const rate = clamp(finite(options.rate), 0, FOOD_RULES.maximumSpawnPerSecond);
+    const maximumPerStep = Math.max(1, Math.floor(finite(options.maximumPerStep, FOOD_RULES.maximumSpawnPerStep)));
+    const bank = Math.min(
+      FOOD_RULES.maximumSpawnBank,
+      Math.max(0, finite(options.bank)) + dt * rate
+    );
+    const count = Math.min(shortage, maximumPerStep, Math.floor(bank));
+    return Object.freeze({ count, bank: bank - count });
   }
 
   function botStartMassRange(index, config = {}) {
@@ -370,12 +445,17 @@
   const api = Object.freeze({
     MOVEMENT,
     MODE_SPEED,
+    WORLD_RULES,
     VIRUS_RULES,
     VIRUS_FEED,
+    FOOD_RULES,
     clamp,
     finite,
     radiusFromMass,
     mergeCooldownSeconds,
+    foodTargetCount,
+    foodSpawnRate,
+    advanceFoodSpawnBank,
     botStartMassRange,
     virusSplitPlan,
     sporeBurstPlan,

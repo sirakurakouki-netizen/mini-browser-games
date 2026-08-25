@@ -60,7 +60,7 @@
   const lobbyBackBtn = document.getElementById("lobbyBackBtn");
   const modeButtons = [...document.querySelectorAll("[data-mode]")];
 
-  const WORLD = 7600;
+  const WORLD = gameplayCore.WORLD_RULES.size;
   const FOOD_BASE_COUNT = 2100;
   const FOOD_MAX_COUNT = 3600;
   const FOOD_BUCKET = 180;
@@ -392,6 +392,7 @@
     qualityPressure: 0,
     qualityRecovery: 0,
     scaleChanges: 0,
+    backingStoreResizes: 0,
     renderedFrames: 0,
     skippedRenderFrames: 0,
     lastRankHtml: "",
@@ -454,13 +455,23 @@
     dpr = Math.min(perf.pixelRatioCap, window.devicePixelRatio || 1);
     view.w = window.innerWidth;
     view.h = window.innerHeight;
-    canvas.width = Math.floor(view.w * dpr);
-    canvas.height = Math.floor(view.h * dpr);
+    const targetWidth = Math.max(1, Math.floor(view.w * dpr));
+    const targetHeight = Math.max(1, Math.floor(view.h * dpr));
+    const backingStoreChanged = canvas.width !== targetWidth || canvas.height !== targetHeight;
+    if (backingStoreChanged) {
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      perf.backingStoreResizes += 1;
+    }
     canvas.style.width = `${view.w}px`;
     canvas.style.height = `${view.h}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "medium";
+    if (backingStoreChanged) {
+      ctx.fillStyle = "#061015";
+      ctx.fillRect(0, 0, view.w, view.h);
+    }
     const qualityDrop = Math.max(0, ratioCeiling - perf.pixelRatioCap);
     const gpuRatioCeiling = gameplayCore.gpuPixelRatioCeiling(gpuRenderer?.info().device);
     const gpuRatio = clamp(Math.min(gpuRatioCeiling, dpr) - qualityDrop * 1.5, 0.6, gpuRatioCeiling);
@@ -1845,21 +1856,23 @@
   }
 
   function foodTargetCount(now) {
-    const elapsed = elapsedSeconds(now);
-    const config = modeConfig();
-    const phaseBonus = Math.max(0, (safeZone.phase || 1) - 1) * 185;
-    const lateRamp = config.lateFoodRamp ? Math.max(0, elapsed - (config.dominationWarmup || 55)) * config.lateFoodRamp * 5 : 0;
-    const target = FOOD_BASE_COUNT + elapsed * 4.2 + phaseBonus + lateRamp;
-    const scale = config.foodTargetScale || 1;
-    return Math.floor(clamp(target * activeEventFactor("foodTargetMult", 1) * scale, FOOD_BASE_COUNT * Math.min(1, scale), FOOD_MAX_COUNT * Math.max(1, scale)));
+    return gameplayCore.foodTargetCount({
+      config: modeConfig(),
+      elapsedSeconds: elapsedSeconds(now),
+      phase: safeZone.phase || 1,
+      eventTargetMultiplier: activeEventFactor("foodTargetMult", 1),
+      baseCount: FOOD_BASE_COUNT,
+      maximumCount: FOOD_MAX_COUNT
+    });
   }
 
   function foodSpawnRate(now) {
-    const elapsed = elapsedSeconds(now);
-    const config = modeConfig();
-    const scale = config.foodRateScale || 1;
-    const lateRamp = config.lateFoodRamp ? Math.max(0, elapsed - (config.dominationWarmup || 55)) * config.lateFoodRamp * 0.18 : 0;
-    return clamp((24 + elapsed * 0.34 + lateRamp + (safeZone.phase || 1) * 9) * activeEventFactor("foodRateMult", 1) * scale, 24, 220);
+    return gameplayCore.foodSpawnRate({
+      config: modeConfig(),
+      elapsedSeconds: elapsedSeconds(now),
+      phase: safeZone.phase || 1,
+      eventRateMultiplier: activeEventFactor("foodRateMult", 1)
+    });
   }
 
   function foodBucketKey(bucketX, bucketY) {
@@ -2017,6 +2030,7 @@
     perf.qualityPressure = 0;
     perf.qualityRecovery = 0;
     perf.scaleChanges = 0;
+    perf.backingStoreResizes = 0;
     perf.drawnFood = 0;
     perf.drawnCells = 0;
     perf.maxFrame = 0;
@@ -3541,14 +3555,14 @@
 
   function updateFoodSpawns(dt, now) {
     const target = foodTargetCount(now);
-    if (foods.length >= target) return;
-
-    foodSpawnBank += dt * foodSpawnRate(now);
-    const count = Math.min(Math.floor(foodSpawnBank), target - foods.length, 18);
-    if (count <= 0) return;
-
-    foodSpawnBank -= count;
-    for (let i = 0; i < count; i++) addFood(makeFood());
+    const spawn = gameplayCore.advanceFoodSpawnBank({
+      bank: foodSpawnBank,
+      dt,
+      rate: foodSpawnRate(now),
+      shortage: target - foods.length
+    });
+    foodSpawnBank = spawn.bank;
+    for (let i = 0; i < spawn.count; i++) addFood(makeFood());
   }
 
   function handleFoodEating(now, cells) {
@@ -4764,6 +4778,31 @@
     showLobbyPanel("outfit");
   }
 
+  function displayDescription(state) {
+    const output = state?.display;
+    if (!output) return `检测到显示器刷新率 ${REQUESTED_REFRESH_RATE} Hz；当前图形目标 ${TARGET_RENDER_FPS} FPS。`;
+    const mode = state.fullscreen ? "无边框全屏" : "窗口化";
+    const size = state.contentBounds || state.bounds;
+    const windowText = size ? `${size.width} × ${size.height}` : "未知";
+    return `当前 ${mode} · 窗口 ${windowText} · 显示器 ${output.width} × ${output.height} @ ${output.refreshRate || REQUESTED_REFRESH_RATE} Hz（缩放 ${Math.round((output.scaleFactor || 1) * 100)}%）。`;
+  }
+
+  function refreshDisplayNote(state) {
+    const note = document.getElementById("displayRefreshNote");
+    if (!note) return;
+    const renderWidth = canvas.width || Math.round(window.innerWidth * dpr);
+    const renderHeight = canvas.height || Math.round(window.innerHeight * dpr);
+    note.textContent = `${displayDescription(state)} 当前内部渲染 ${renderWidth} × ${renderHeight}（${dpr.toFixed(2)}×）；窗口大小与渲染清晰度彼此独立。`;
+  }
+
+  let displaySyncSequence = 0;
+
+  function syncDisplayControls(state) {
+    if (!settingsForm || !state?.mode) return;
+    settingsForm.elements.displayMode.value = state.mode;
+    settingsForm.elements.windowSize.disabled = state.mode !== "windowed";
+  }
+
   function populateSettingsForm() {
     if (!settingsForm) return;
     const saved = settingsApi.load();
@@ -4775,8 +4814,15 @@
     settingsForm.elements.showPerformance.checked = saved.showPerformance;
     settingsForm.elements.screenShake.checked = saved.screenShake;
     settingsForm.elements.windowSize.disabled = saved.displayMode !== "windowed";
-    const note = document.getElementById("displayRefreshNote");
-    if (note) note.textContent = `检测到桌面刷新率 ${REQUESTED_REFRESH_RATE} Hz；当前图形目标 ${TARGET_RENDER_FPS} FPS。保存后单人和联机使用同一设置。`;
+    refreshDisplayNote();
+    if (window.starClusterDesktop?.getDisplayState) {
+      const sequence = ++displaySyncSequence;
+      void window.starClusterDesktop.getDisplayState().then(state => {
+        if (sequence !== displaySyncSequence) return;
+        syncDisplayControls(state);
+        refreshDisplayNote(state);
+      }).catch(() => refreshDisplayNote());
+    }
   }
 
   function updateFullscreenButton(state) {
@@ -6310,11 +6356,14 @@
     }
   });
   settingsForm?.elements.displayMode?.addEventListener("change", () => {
+    displaySyncSequence += 1;
     settingsForm.elements.windowSize.disabled = settingsForm.elements.displayMode.value !== "windowed";
   });
   settingsForm?.addEventListener("submit", async event => {
     event.preventDefault();
-    const saved = settingsApi.save({
+    displaySyncSequence += 1;
+    const previous = settingsApi.load();
+    const requested = settingsApi.normalize({
       displayMode: settingsForm.elements.displayMode.value,
       windowSize: settingsForm.elements.windowSize.value,
       frameRate: settingsForm.elements.frameRate.value,
@@ -6323,27 +6372,70 @@
       showPerformance: settingsForm.elements.showPerformance.checked,
       screenShake: settingsForm.elements.screenShake.checked
     });
+    let displayState = null;
     if (window.starClusterDesktop?.setDisplayMode) {
       try {
-        updateFullscreenButton(await window.starClusterDesktop.setDisplayMode({ mode: saved.displayMode, windowSize: saved.windowSize }));
+        displayState = await window.starClusterDesktop.setDisplayMode({ mode: requested.displayMode, windowSize: requested.windowSize });
+        updateFullscreenButton(displayState);
+        refreshDisplayNote(displayState);
+        if (!displayState?.ok) throw new Error(displayState?.error || "系统未确认显示模式切换");
       } catch {
-        showLobbyToast("显示模式应用失败，仍可使用 F11 切换", "#ff7a90");
+        const actualMode = displayState?.mode || previous.displayMode;
+        settingsApi.save({ ...requested, displayMode: actualMode });
+        settingsForm.elements.displayMode.value = actualMode;
+        settingsForm.elements.windowSize.disabled = actualMode !== "windowed";
+        showLobbyToast(displayState?.error || "显示模式应用失败，仍可使用 F11 切换", "#ff7a90");
+        return;
+      }
+    } else {
+      try {
+        const wantsFullscreen = requested.displayMode === "borderless-fullscreen";
+        if (wantsFullscreen && !document.fullscreenElement) await document.documentElement.requestFullscreen();
+        if (!wantsFullscreen && document.fullscreenElement) await document.exitFullscreen();
+        const fullscreen = Boolean(document.fullscreenElement);
+        displayState = { ok: fullscreen === wantsFullscreen, fullscreen, mode: fullscreen ? "borderless-fullscreen" : "windowed" };
+        updateFullscreenButton(displayState);
+        if (!displayState.ok) throw new Error("浏览器未确认全屏切换");
+      } catch {
+        const actualMode = document.fullscreenElement ? "borderless-fullscreen" : "windowed";
+        settingsApi.save({ ...requested, displayMode: actualMode });
+        settingsForm.elements.displayMode.value = actualMode;
+        showLobbyToast("浏览器拒绝了全屏请求，可按 F11 使用浏览器全屏", "#ff7a90");
         return;
       }
     }
-    location.reload();
+    const saved = settingsApi.save({ ...requested, displayMode: displayState?.mode || requested.displayMode });
+    const runtimeChanged = ["frameRate", "quality", "showPerformance", "screenShake"]
+      .some(key => previous[key] !== saved[key]);
+    if (runtimeChanged) {
+      showLobbyToast("设置已保存，正在重新载入渲染器", "#58edc8");
+      setTimeout(() => location.reload(), 180);
+      return;
+    }
+    showTitlePanel("home");
+    showLobbyToast("显示设置已应用", "#58edc8");
   });
   document.getElementById("titleFullscreenBtn")?.addEventListener("click", async () => {
     try {
       if (window.starClusterDesktop?.toggleFullscreen) {
-        updateFullscreenButton(await window.starClusterDesktop.toggleFullscreen());
+        const state = await window.starClusterDesktop.toggleFullscreen();
+        updateFullscreenButton(state);
+        refreshDisplayNote(state);
+        if (!state?.ok) throw new Error(state?.error || "系统未确认全屏切换");
       } else if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen?.();
-        updateFullscreenButton({ fullscreen: true });
+        if (!document.documentElement.requestFullscreen) throw new Error("浏览器不支持全屏 API");
+        await document.documentElement.requestFullscreen();
+        const fullscreen = Boolean(document.fullscreenElement);
+        updateFullscreenButton({ fullscreen });
+        if (!fullscreen) throw new Error("浏览器未确认全屏切换");
       } else {
-        await document.exitFullscreen?.();
-        updateFullscreenButton({ fullscreen: false });
+        if (!document.exitFullscreen) throw new Error("浏览器不支持退出全屏 API");
+        await document.exitFullscreen();
+        const fullscreen = Boolean(document.fullscreenElement);
+        updateFullscreenButton({ fullscreen });
+        if (fullscreen) throw new Error("浏览器未确认退出全屏");
       }
+      showLobbyToast("显示模式已切换", "#58edc8");
     } catch {
       showLobbyToast("全屏切换失败，桌面版仍可按 F11", "#ff7a90");
     }
@@ -6416,7 +6508,10 @@
   document.addEventListener("fullscreenchange", () => updateFullscreenButton());
   if (window.starClusterDesktop?.onDisplayState) {
     window.starClusterDesktop.onDisplayState(state => {
+      displaySyncSequence += 1;
       updateFullscreenButton(state);
+      refreshDisplayNote(state);
+      syncDisplayControls(state);
       const saved = settingsApi.load();
       if (state?.mode && saved.displayMode !== state.mode) settingsApi.save({ ...saved, displayMode: state.mode });
     });
@@ -6485,6 +6580,9 @@
           foodCount: foods.length,
           foodTarget: foodTargetCount(now),
           foodRate: Math.round(foodSpawnRate(now) * 10) / 10,
+          leaderMass: Math.round(groups.reduce((best, group) => group.dead ? best : Math.max(best, groupMass(group)), 0)),
+          totalMass: Math.round(groups.reduce((sum, group) => sum + groupMass(group), 0)),
+          totalKills: groups.reduce((sum, group) => sum + (group.kills || 0), 0),
           playerMass: Math.round(groupMass(playerGroup) * 10) / 10,
           playerColor: playerGroup.color,
           playerTeam: playerGroup.team,
@@ -6514,6 +6612,7 @@
           maxFrame: Math.round(perf.maxFrame * 10) / 10,
           longFrames: perf.longFrames,
           pixelRatio: Math.round(dpr * 100) / 100,
+          backingStoreResizes: perf.backingStoreResizes,
           targetFps: TARGET_RENDER_FPS,
           renderedFrames: perf.renderedFrames,
           skippedRenderFrames: perf.skippedRenderFrames,
@@ -7106,36 +7205,10 @@
   function adaptRenderScale(now) {
     if (now < perf.nextQualityCheck) return;
     perf.nextQualityCheck = now + 5000;
-    const ceiling = renderRatioCeiling();
-    if (game.menu || game.over) {
-      perf.qualityPressure = 0;
-      perf.qualityRecovery = 0;
-      if (Math.abs(ceiling - perf.pixelRatioCap) >= 0.05) {
-        perf.pixelRatioCap = ceiling;
-        resize();
-      }
-      return;
-    }
-
-    const pressured = perf.avgFrame > TARGET_FRAME_MS * 1.1 || perf.avgWork > TARGET_FRAME_MS * 0.86;
-    const comfortable = perf.avgFrame < TARGET_FRAME_MS * 1.03 && perf.avgWork < TARGET_FRAME_MS * 0.68;
-    perf.qualityPressure = pressured ? perf.qualityPressure + 1 : 0;
-    perf.qualityRecovery = comfortable ? perf.qualityRecovery + 1 : 0;
-
-    const pressureThreshold = perf.avgFrame > TARGET_FRAME_MS * 1.45 ? 1 : 2;
-    if (perf.qualityPressure >= pressureThreshold && perf.pixelRatioCap > 0.7) {
-      perf.pixelRatioCap = Math.max(0.7, Math.min(ceiling, perf.pixelRatioCap - 0.1));
-      perf.qualityPressure = 0;
-      perf.qualityRecovery = 0;
-      perf.scaleChanges += 1;
-      resize();
-    } else if (perf.qualityRecovery >= 4 && perf.pixelRatioCap < ceiling - 0.04) {
-      perf.pixelRatioCap = Math.min(ceiling, perf.pixelRatioCap + 0.05);
-      perf.qualityPressure = 0;
-      perf.qualityRecovery = 0;
-      perf.scaleChanges += 1;
-      resize();
-    }
+    // 对局中的动态降级只调整绘制细节，不再周期性重建 Canvas 像素缓冲。
+    // 改写 canvas.width/height 会清空 2D 与 WebGL 后备缓冲，是偶发整屏闪烁的主要风险点。
+    perf.qualityPressure = 0;
+    perf.qualityRecovery = 0;
   }
 
   function reportRuntime() {
@@ -7155,6 +7228,7 @@
       longFrames: perf.longFrames,
       lowQuality: perf.lowQuality,
       scaleChanges: perf.scaleChanges,
+      backingStoreResizes: perf.backingStoreResizes,
       renderedFrames: perf.renderedFrames,
       skippedRenderFrames: perf.skippedRenderFrames,
       gpuPixelRatio: info.pixelRatio || 0,

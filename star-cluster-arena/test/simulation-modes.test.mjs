@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MODE_KEYS } from "../backend/multiplayer/modes.mjs";
+import { getModeConfig, MODE_KEYS } from "../backend/multiplayer/modes.mjs";
 import {
   AuthoritativeSimulation,
   SIMULATION_CONSTANTS,
@@ -103,6 +103,97 @@ test("all ten modes instantiate, tick and serialize finite bounded state", async
   }
 });
 
+test("all ten modes cap one-minute authoritative food production", async t => {
+  for (const mode of EXPECTED_MODES) {
+    await t.test(mode, () => {
+      const simulation = createSimulation(mode, { botCount: mode === "demon" ? 4 : 0 });
+      let generated = 0;
+      for (let tick = 0; tick < 60 * SIMULATION_CONSTANTS.SERVER_HZ; tick += 1) {
+        simulation.foods.length = 0;
+        simulation.foodGrid.clear();
+        simulation.foodAdded.clear();
+        simulation.foodRemoved.clear();
+        simulation.step(START_TIME + (tick + 1) * 1000 / SIMULATION_CONSTANTS.SERVER_HZ);
+        generated += simulation.foods.length;
+        simulation.clearFoodDelta();
+      }
+      assert.ok(generated > 0, `${mode} stopped producing food`);
+      assert.ok(generated <= 13_200, `${mode} exceeded the shared 220 food/s hard ceiling: ${generated}`);
+    });
+  }
+});
+
+test("solo one-minute AI growth stays inside the measured single-player pacing envelope", () => {
+  for (const seed of [1, 3, 12_345]) {
+    const simulation = new AuthoritativeSimulation({
+      players: [{ id: "player-a", name: "甲" }],
+      botCount: 99,
+      seed,
+      now: START_TIME,
+      mode: "solo"
+    });
+    for (let tick = 0; tick < 60 * SIMULATION_CONSTANTS.SERVER_HZ; tick += 1) {
+      simulation.step(START_TIME + (tick + 1) * 1000 / SIMULATION_CONSTANTS.SERVER_HZ);
+    }
+    const leaderMass = Math.max(...simulation.groups.map(group => simulation.groupMass(group)));
+    const totalKills = simulation.groups.reduce((sum, group) => sum + group.kills, 0);
+    assert.ok(leaderMass < 3_500, `seed ${seed} produced a one-minute leader mass of ${Math.round(leaderMass)}`);
+    assert.ok(totalKills < 25, `seed ${seed} produced ${totalKills} one-minute eliminations`);
+    assert.ok(simulation.foods.length > 2_250, `seed ${seed} depleted the shared food field to ${simulation.foods.length}`);
+  }
+});
+
+test("all ten modes stay inside mode-aware one-minute balance guardrails", () => {
+  const maximumLeaderMass = {
+    solo: 3_500,
+    team: 5_000,
+    survival: 6_000,
+    battle: 15_000,
+    blitz: 15_000,
+    spore: 10_000,
+    screen: 175_000,
+    control: 20_000,
+    giant: 150_000,
+    demon: 150_000
+  };
+  const maximumTotalMass = {
+    solo: 120_000,
+    team: 100_000,
+    survival: 150_000,
+    battle: 250_000,
+    blitz: 250_000,
+    spore: 150_000,
+    screen: 900_000,
+    control: 200_000,
+    giant: 1_000_000,
+    demon: 500_000
+  };
+
+  for (const mode of EXPECTED_MODES) {
+    const config = getModeConfig(mode);
+    const simulation = new AuthoritativeSimulation({
+      players: [{ id: "human", name: "真人" }],
+      botCount: Math.max(config.minimumBots || 0, config.targetParticipants - 1),
+      seed: 12_345,
+      now: START_TIME,
+      mode
+    });
+    for (let tick = 0; tick < 60 * SIMULATION_CONSTANTS.SERVER_HZ; tick += 1) {
+      simulation.step(START_TIME + (tick + 1) * 1000 / SIMULATION_CONSTANTS.SERVER_HZ);
+    }
+
+    const masses = simulation.groups.map(group => simulation.groupMass(group));
+    const leaderMass = Math.max(...masses);
+    const totalMass = masses.reduce((sum, mass) => sum + mass, 0);
+    const totalKills = simulation.groups.reduce((sum, group) => sum + group.kills, 0);
+    assert.equal(simulation.groups.length, config.targetParticipants, `${mode} did not fill its canonical population`);
+    assert.ok(simulation.foods.length >= 500, `${mode} depleted its food field to ${simulation.foods.length}`);
+    assert.ok(leaderMass <= maximumLeaderMass[mode], `${mode} leader grew to ${Math.round(leaderMass)}`);
+    assert.ok(totalMass <= maximumTotalMass[mode], `${mode} total mass grew to ${Math.round(totalMass)}`);
+    assert.ok(totalKills <= config.targetParticipants * 2, `${mode} produced ${totalKills} eliminations in one minute`);
+  }
+});
+
 test("team modes balance assignments and block friendly consumption", () => {
   const team = createSimulation("team", { players: players(8), botCount: 0 });
   const teamSizes = new Map();
@@ -166,6 +257,30 @@ test("survival spends lives, rewards kills and permanently eliminates at zero", 
   assert.equal(victim.respawnTick, 0);
 });
 
+test("respawn delay and shield block spawn farming like the single-player rule", () => {
+  const simulation = createSimulation("solo", { players: players(2), botCount: 0 });
+  const [predator, victim] = simulation.groups;
+  simulation.eliminateGroup(victim, predator);
+  const respawnDelay = victim.respawnTick - simulation.tick;
+  assert.equal(respawnDelay, Math.round(1.35 * SIMULATION_CONSTANTS.SERVER_HZ));
+
+  simulation.tick = victim.respawnTick;
+  simulation.updateRespawns();
+  assert.equal(victim.dead, false);
+  assert.equal(victim.invincibleUntilTick - simulation.tick, Math.round(1.8 * SIMULATION_CONSTANTS.SERVER_HZ));
+
+  predator.cells[0].mass = 20_000;
+  predator.cells[0].radius = Math.sqrt(predator.cells[0].mass) * 4;
+  predator.cells[0].x = victim.cells[0].x;
+  predator.cells[0].y = victim.cells[0].y;
+  simulation.handleCellEating();
+  assert.equal(victim.dead, false, "shielded respawns cannot be eaten");
+
+  simulation.tick = victim.invincibleUntilTick;
+  simulation.handleCellEating();
+  assert.equal(victim.dead, true, "normal collision resumes when the shield expires");
+});
+
 test("battle shrinks its safe zone, applies damage and ends with the last survivor", () => {
   const simulation = createSimulation("battle");
   const [survivor, victim] = simulation.groups;
@@ -207,13 +322,14 @@ test("blitz events rotate deterministically and supremacy can finish the match",
   simulation.events = [];
   simulation.updateMatchEvent();
   assert.equal(simulation.activeEvent.key, "harvest");
-  assert.equal(simulation.currentEventMultiplier("foodScale"), 1.35);
+  assert.equal(simulation.currentEventMultiplier("foodTargetMult"), 1.28);
+  assert.equal(simulation.currentEventMultiplier("foodRateMult"), 1.85);
   assert.equal(simulation.events.at(-1).event, "match-event");
 
   simulation.tick = simulation.activeEvent.endsAtTick;
   simulation.updateMatchEvent();
   assert.equal(simulation.activeEvent, null);
-  assert.equal(simulation.currentEventMultiplier("foodScale"), 1);
+  assert.equal(simulation.currentEventMultiplier("foodTargetMult"), 1);
   assert.ok(simulation.events.some(event => event.event === "match-event-ended"));
 
   const [leader, runnerUp] = simulation.groups;
@@ -475,8 +591,8 @@ test("food full baseline and atomic delta rebuild identical food state", () => {
   assert.equal(Object.hasOwn(deltaSnapshot, "foods"), false);
   assert.equal(deltaSnapshot.foodDelta.fromRevision, previousRevision);
   assert.equal(deltaSnapshot.foodDelta.toRevision, previousRevision + 1);
-  assert.deepEqual(deltaSnapshot.foodDelta.removed, [removed.id]);
-  assert.equal(deltaSnapshot.foodDelta.added.length, 1);
+  assert.ok(deltaSnapshot.foodDelta.removed.includes(removed.id));
+  assert.ok(deltaSnapshot.foodDelta.added.length <= 2, "one tick must obey the shared food spawn budget");
 
   for (const id of deltaSnapshot.foodDelta.removed) reconstructed.delete(id);
   for (const food of deltaSnapshot.foodDelta.added) reconstructed.set(food.id, food);

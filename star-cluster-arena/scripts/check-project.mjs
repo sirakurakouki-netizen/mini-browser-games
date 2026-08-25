@@ -7,7 +7,7 @@ const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const requiredFiles = [
   "backend/server.mjs",
   "desktop/main.mjs",
-  "desktop/preload.mjs",
+  "desktop/preload.cjs",
   "desktop/external-links.mjs",
   "desktop/forge.config.mjs",
   "desktop/electron-builder.yml",
@@ -30,7 +30,9 @@ const requiredFiles = [
   "docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md",
   "docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md",
   "docs/SDD-CANONICAL-GAMEPLAY-DESKTOP-V3.6.md",
-  "docs/RELEASE-NOTES-V3.6.0.md"
+  "docs/RELEASE-NOTES-V3.6.0.md",
+  "docs/SDD-PLAYABILITY-PARITY-BETA-V3.7.md",
+  "docs/RELEASE-NOTES-V3.7.0-BETA.2.md"
 ];
 
 async function recurse(relativeDirectory) {
@@ -51,7 +53,7 @@ const sourceFiles = (await Promise.all([
   recurse("desktop"),
   recurse("frontend/js"),
   recurse("scripts")
-])).flat().filter(file => [".js", ".mjs"].includes(extname(file)));
+])).flat().filter(file => [".js", ".mjs", ".cjs"].includes(extname(file)));
 
 for (const relative of sourceFiles) {
   execFileSync(process.execPath, ["--check", join(projectRoot, relative)], { stdio: "pipe" });

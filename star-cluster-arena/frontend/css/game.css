@@ -188,6 +188,7 @@
   .title-action small { color: #7890a5; font-size: 10px; }
   .title-action.primary { border-color: #58edc8; }
   .title-action.online { border-color: #60a5fa; }
+  .beta-inline { margin-left: 5px; padding: 2px 5px; border-radius: 999px; color: #071015; background: #ffd166; font-size: 8px; font-style: normal; vertical-align: 1px; }
   .desktop-only { display: none; }
   .desktop-env .desktop-only { display: grid; }
 

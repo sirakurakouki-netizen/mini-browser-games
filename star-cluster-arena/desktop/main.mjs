@@ -7,11 +7,13 @@ import electronSquirrelStartup from "electron-squirrel-startup";
 import { startServer } from "../backend/server.mjs";
 import { inspectWindowsFirewall } from "../backend/multiplayer/windows-network-diagnostics.mjs";
 import { normalizeExternalUrl } from "./external-links.mjs";
+import { createDisplayModeController, readDisplayState } from "./display-mode.mjs";
 
 const PROJECT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const SMOKE_MODE = process.env.SCA_DESKTOP_SMOKE === "1";
 const SMOKE_MULTIPLAYER = process.env.SCA_DESKTOP_SMOKE_PATH === "multiplayer";
 const SMOKE_GAMEPLAY = process.env.SCA_DESKTOP_SMOKE_GAMEPLAY === "1";
+const SMOKE_DISPLAY = process.env.SCA_DESKTOP_SMOKE_DISPLAY === "1";
 const SMOKE_GAMEPLAY_MODE = ["solo", "team", "survival", "battle", "blitz", "spore", "screen", "control", "giant", "demon"].includes(process.env.SCA_DESKTOP_SMOKE_GAMEPLAY_MODE)
   ? process.env.SCA_DESKTOP_SMOKE_GAMEPLAY_MODE
   : "solo";
@@ -23,13 +25,7 @@ let serverController = null;
 let stopping = false;
 let logFile = null;
 let desktopRefreshRate = 60;
-const WINDOW_SIZES = new Map([
-  ["1280x720", [1280, 720]],
-  ["1440x900", [1440, 900]],
-  ["1600x900", [1600, 900]],
-  ["1920x1080", [1920, 1080]]
-]);
-
+let displayModeController = null;
 app.commandLine.appendSwitch(SMOKE_LOW_POWER_GPU ? "force_low_power_gpu" : "force_high_performance_gpu");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
@@ -90,12 +86,7 @@ async function openAllowedExternal(target) {
 }
 
 function currentDisplayState() {
-  if (!mainWindow) return { mode: "windowed", fullscreen: false, bounds: null };
-  return {
-    mode: mainWindow.isFullScreen() ? "borderless-fullscreen" : "windowed",
-    fullscreen: mainWindow.isFullScreen(),
-    bounds: mainWindow.getBounds()
-  };
+  return displayModeController?.read() || readDisplayState(mainWindow, screen);
 }
 
 function emitDisplayState() {
@@ -103,24 +94,101 @@ function emitDisplayState() {
   mainWindow.webContents.send("desktop:display-state", currentDisplayState());
 }
 
-function setDesktopDisplayMode(settings = {}) {
-  if (!mainWindow) return currentDisplayState();
-  const mode = settings?.mode === "borderless-fullscreen" ? "borderless-fullscreen" : "windowed";
-  if (mode === "borderless-fullscreen") {
-    mainWindow.setFullScreen(true);
-  } else {
-    mainWindow.setFullScreen(false);
-    const size = WINDOW_SIZES.get(String(settings?.windowSize || ""));
-    if (size) {
-      const display = screen.getDisplayMatching(mainWindow.getBounds());
-      const width = Math.min(size[0], display.workAreaSize.width);
-      const height = Math.min(size[1], display.workAreaSize.height);
-      mainWindow.setSize(Math.max(960, width), Math.max(640, height), true);
-      mainWindow.center();
-    }
+async function setDesktopDisplayMode(settings = {}) {
+  if (!displayModeController) return currentDisplayState();
+  const state = await displayModeController.set(settings);
+  emitDisplayState();
+  logger.info(`显示模式请求：${settings?.mode || "windowed"}；结果：${state.mode}；全屏=${state.fullscreen}`);
+  return state;
+}
+
+async function toggleDesktopDisplayMode(windowSize = "current") {
+  if (!displayModeController) return currentDisplayState();
+  const state = await displayModeController.toggle(windowSize);
+  emitDisplayState();
+  logger.info(`显示模式切换；结果：${state.mode}；全屏=${state.fullscreen}`);
+  return state;
+}
+
+async function waitForNativeFullscreen(expected, timeoutMs = 2600) {
+  const startedAt = Date.now();
+  while (Boolean(mainWindow?.isFullScreen()) !== expected) {
+    if (Date.now() - startedAt > timeoutMs) return false;
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
-  setImmediate(emitDisplayState);
-  return currentDisplayState();
+  return true;
+}
+
+async function rendererDisplaySnapshot(smokeWindow) {
+  return smokeWindow.webContents.executeJavaScript(`({
+    desktopApi: Boolean(window.starClusterDesktop?.desktop),
+    desktopMethods: ['getDisplayState', 'setDisplayMode', 'toggleFullscreen', 'openExternal', 'copyText', 'quitApp']
+      .every(method => typeof window.starClusterDesktop?.[method] === 'function'),
+    buttonText: document.getElementById('titleFullscreenBtn')?.textContent || '',
+    buttonPressed: document.getElementById('titleFullscreenBtn')?.getAttribute('aria-pressed') || '',
+    savedMode: window.ScaGameSettings?.load?.().displayMode || '',
+    selectedMode: document.getElementById('gameSettingsForm')?.elements.displayMode.value || ''
+  })`);
+}
+
+async function waitForRendererDisplay(smokeWindow, expectedFullscreen, timeoutMs = 3000) {
+  const expectedMode = expectedFullscreen ? "borderless-fullscreen" : "windowed";
+  const expectedPressed = String(expectedFullscreen);
+  const startedAt = Date.now();
+  let state = null;
+  do {
+    state = await rendererDisplaySnapshot(smokeWindow);
+    if (
+      state.desktopApi
+      && state.desktopMethods
+      && state.savedMode === expectedMode
+      && state.selectedMode === expectedMode
+      && state.buttonPressed === expectedPressed
+    ) return state;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  } while (Date.now() - startedAt <= timeoutMs);
+  return state;
+}
+
+async function collectDisplayInteractionSmoke(smokeWindow) {
+  await setDesktopDisplayMode({ mode: "windowed", windowSize: "current" });
+  const initial = await rendererDisplaySnapshot(smokeWindow);
+  logger.info(`显示交互初始状态：${JSON.stringify(initial)}`);
+  if (!initial.desktopApi || !initial.desktopMethods) throw new Error("桌面桥接未完整加载，首页按钮会错误地退回浏览器全屏路径");
+  await smokeWindow.webContents.executeJavaScript(`document.getElementById('titleFullscreenBtn').click()`);
+  if (!await waitForNativeFullscreen(true)) throw new Error("首页全屏按钮未进入原生全屏");
+  const buttonEnteredRenderer = await waitForRendererDisplay(smokeWindow, true);
+  const buttonEntered = { native: currentDisplayState(), renderer: buttonEnteredRenderer };
+
+  await smokeWindow.webContents.executeJavaScript(`document.getElementById('titleFullscreenBtn').click()`);
+  if (!await waitForNativeFullscreen(false)) throw new Error("首页全屏按钮未退出原生全屏");
+  const buttonLeftRenderer = await waitForRendererDisplay(smokeWindow, false);
+  const buttonLeft = { native: currentDisplayState(), renderer: buttonLeftRenderer };
+
+  await smokeWindow.webContents.executeJavaScript(`(() => {
+    document.querySelector('[data-title-open="settings"]').click();
+    const form = document.getElementById('gameSettingsForm');
+    form.elements.displayMode.value = 'borderless-fullscreen';
+    form.elements.displayMode.dispatchEvent(new Event('change', { bubbles: true }));
+    form.requestSubmit();
+  })()`);
+  if (!await waitForNativeFullscreen(true)) throw new Error("设置保存未进入原生全屏");
+  const settingsEnteredRenderer = await waitForRendererDisplay(smokeWindow, true);
+  const settingsEntered = { native: currentDisplayState(), renderer: settingsEnteredRenderer };
+
+  await smokeWindow.webContents.executeJavaScript(`(() => {
+    document.querySelector('[data-title-open="settings"]').click();
+    const form = document.getElementById('gameSettingsForm');
+    form.elements.displayMode.value = 'windowed';
+    form.elements.windowSize.value = '1280x720';
+    form.elements.displayMode.dispatchEvent(new Event('change', { bubbles: true }));
+    form.requestSubmit();
+  })()`);
+  if (!await waitForNativeFullscreen(false)) throw new Error("设置保存未退出原生全屏");
+  const settingsLeftRenderer = await waitForRendererDisplay(smokeWindow, false);
+  const settingsLeft = { native: currentDisplayState(), renderer: settingsLeftRenderer };
+
+  return { buttonEntered, buttonLeft, settingsEntered, settingsLeft };
 }
 
 function tcpPortHasListener(port, timeoutMs = 280) {
@@ -161,10 +229,15 @@ async function collectGameplaySmoke(smokeWindow) {
         longFrames: state.longFrames,
         lowQuality: state.lowQuality,
         pixelRatio: state.pixelRatio,
+        backingStoreResizes: state.backingStoreResizes,
         renderedFrames: state.renderedFrames,
         skippedRenderFrames: state.skippedRenderFrames,
         drawnFood: state.drawnFood,
         drawnCells: state.drawnCells,
+        foodCount: state.foodCount,
+        leaderMass: state.leaderMass,
+        totalMass: state.totalMass,
+        totalKills: state.totalKills,
         renderer: state.renderer
       });
     }
@@ -241,13 +314,18 @@ async function collectMultiplayerGameplaySmoke(smokeWindow) {
       const detail = document.getElementById('gameNetworkDetail').textContent || '';
       const fps = Number(detail.match(/图形 ([0-9]+) FPS/i)?.[1] || detail.match(/([0-9]+)fps/i)?.[1] || 0);
       const snapshotHz = Number(detail.match(/权威 ([0-9.]+) Hz/i)?.[1] || detail.match(/([0-9.]+)Hz/i)?.[1] || 0);
+      const debug = window.__starClusterMultiplayerDebug?.snapshot?.() || {};
       samples.push({
         elapsed,
         fps,
         snapshotHz,
         detail,
         mass: document.getElementById('gameMass').textContent,
-        rank: document.getElementById('gameRank').textContent
+        rank: document.getElementById('gameRank').textContent,
+        world: debug.world,
+        foodCount: debug.foodCount,
+        leaderMass: debug.leaderMass,
+        totalKills: debug.totalKills
       });
     }
     guest.close(1000, 'smoke-complete');
@@ -301,14 +379,16 @@ async function createMainWindow() {
     height: 900,
     minWidth: 960,
     minHeight: 640,
-    show: SMOKE_GAMEPLAY,
-    ...(SMOKE_GAMEPLAY ? { x: -10_000, y: -10_000, skipTaskbar: true } : {}),
+    fullscreenable: true,
+    show: SMOKE_GAMEPLAY || SMOKE_DISPLAY,
+    ...((SMOKE_GAMEPLAY || SMOKE_DISPLAY) ? { x: -10_000, y: -10_000, skipTaskbar: true } : {}),
+    ...(SMOKE_DISPLAY ? { opacity: 0 } : {}),
     backgroundColor: "#07111f",
     title: "星团大作战",
     icon: join(PROJECT_ROOT, "desktop", "assets", "icon.ico"),
-    autoHideMenuBar: false,
+    autoHideMenuBar: true,
     webPreferences: {
-      preload: join(PROJECT_ROOT, "desktop", "preload.mjs"),
+      preload: join(PROJECT_ROOT, "desktop", "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -316,6 +396,8 @@ async function createMainWindow() {
       backgroundThrottling: !SMOKE_GAMEPLAY
     }
   });
+  displayModeController = createDisplayModeController(mainWindow, screen);
+  mainWindow.setMenuBarVisibility(false);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (normalizeExternalUrl(url)) setImmediate(() => void openAllowedExternal(url));
@@ -339,13 +421,19 @@ async function createMainWindow() {
   mainWindow.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
     if (isMainFrame) logger.error(`页面加载失败：${code} ${description} ${url}`);
   });
+  mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
+    logger.error(`桌面桥接加载失败：${preloadPath}`, error);
+  });
 
   mainWindow.once("ready-to-show", () => {
     if (!SMOKE_MODE) mainWindow?.show();
   });
   mainWindow.on("enter-full-screen", emitDisplayState);
   mainWindow.on("leave-full-screen", emitDisplayState);
-  mainWindow.on("closed", () => { mainWindow = null; });
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+    displayModeController = null;
+  });
 
   const activeDisplay = screen.getDisplayMatching(mainWindow.getBounds());
   desktopRefreshRate = Math.min(240, Math.max(60, Math.round(Number(activeDisplay.displayFrequency) || 60)));
@@ -359,10 +447,36 @@ async function createMainWindow() {
           const gameplay = SMOKE_GAMEPLAY
             ? (SMOKE_MULTIPLAYER ? await collectMultiplayerGameplaySmoke(smokeWindow) : await collectGameplaySmoke(smokeWindow))
             : null;
-          const state = await smokeWindow.webContents.executeJavaScript(`({ title: document.title, connection: document.getElementById("connectionText")?.textContent || "", warning: document.getElementById("networkWarning")?.hidden === false, renderer: document.getElementById("renderBadge")?.title || "", refresh: new URLSearchParams(location.search).get("refresh") })`);
+          const display = SMOKE_DISPLAY ? await collectDisplayInteractionSmoke(smokeWindow) : null;
+          const state = await smokeWindow.webContents.executeJavaScript(`({ title: document.title, connection: document.getElementById("connectionText")?.textContent || "", warning: document.getElementById("networkWarning")?.hidden === false, renderer: document.getElementById("renderBadge")?.title || "", refresh: new URLSearchParams(location.search).get("refresh"), desktopApi: Boolean(window.starClusterDesktop?.desktop) })`);
           state.gameplay = gameplay;
+          state.display = display;
           if (SMOKE_MULTIPLAYER && !SMOKE_GAMEPLAY && state.connection !== "联机服务正常") throw new Error(`联机大厅状态异常：${state.connection}`);
+          if (display && (
+            !display.buttonEntered?.native?.fullscreen
+            || display.buttonLeft?.native?.fullscreen
+            || !display.settingsEntered?.native?.fullscreen
+            || display.settingsLeft?.native?.fullscreen
+            || !display.buttonEntered?.renderer?.desktopApi
+            || !display.buttonEntered?.renderer?.desktopMethods
+            || display.buttonEntered?.renderer?.buttonPressed !== "true"
+            || display.buttonLeft?.renderer?.buttonPressed !== "false"
+            || display.settingsEntered?.renderer?.savedMode !== "borderless-fullscreen"
+            || display.settingsLeft?.renderer?.savedMode !== "windowed"
+            || display.settingsEntered?.renderer?.selectedMode !== "borderless-fullscreen"
+            || display.settingsLeft?.renderer?.selectedMode !== "windowed"
+            || Math.abs((display.settingsLeft?.native?.contentBounds?.width || 0) - 1280) > 20
+            || Math.abs((display.settingsLeft?.native?.contentBounds?.height || 0) - 720) > 20
+          )) {
+            throw new Error(`桌面全屏状态异常：${JSON.stringify(display)}`);
+          }
           if (gameplay && gameplay.samples.filter(sample => !sample.over).length < 2) throw new Error(`性能采样缺少有效对局帧：${gameplay.mode}`);
+          if (gameplay && gameplay.samples.some(sample => Number.isFinite(sample.backingStoreResizes) && sample.backingStoreResizes !== 0)) {
+            throw new Error(`固定窗口对局期间发生 Canvas 后备缓冲重建：${JSON.stringify(gameplay.samples)}`);
+          }
+          if (gameplay && SMOKE_MULTIPLAYER && gameplay.samples.some(sample => sample.world && (sample.world.width !== 7600 || sample.world.height !== 7600))) {
+            throw new Error(`联机世界尺寸回退：${JSON.stringify(gameplay.samples)}`);
+          }
           if (gameplay && SMOKE_MIN_FPS > 0 && gameplay.summary.steadyAverageFps < SMOKE_MIN_FPS) {
             throw new Error(`性能采样低于门槛：${gameplay.summary.steadyAverageFps} < ${SMOKE_MIN_FPS} FPS`);
           }
@@ -480,7 +594,7 @@ if (electronSquirrelStartup) {
       });
       ipcMain.handle("desktop:toggle-fullscreen", event => {
         if (!mainWindow || event.sender !== mainWindow.webContents) return null;
-        return setDesktopDisplayMode({ mode: mainWindow.isFullScreen() ? "windowed" : "borderless-fullscreen" });
+        return toggleDesktopDisplayMode();
       });
       ipcMain.handle("desktop:quit", event => {
         if (!mainWindow || event.sender !== mainWindow.webContents) return false;

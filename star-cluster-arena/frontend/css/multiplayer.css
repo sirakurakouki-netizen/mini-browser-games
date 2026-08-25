@@ -94,6 +94,7 @@ button { color: inherit; }
 .brand-lockup small { display: block; }
 .brand-lockup strong { font-size: 15px; letter-spacing: 0.05em; }
 .brand-lockup small { margin-top: 3px; color: var(--muted); font-size: 10px; letter-spacing: 0.08em; }
+.beta-tag { padding: 2px 5px; border-radius: 999px; color: #071015; background: var(--gold); font-size: 8px; }
 
 .brand-orb {
   width: 34px;
@@ -160,6 +161,7 @@ button { color: inherit; }
   background: rgba(255,255,255,0.03);
   font-size: 11px;
 }
+.notice-line .beta-notice { border-color: rgba(255, 209, 102, 0.5); color: #ffe7a3; background: rgba(255, 209, 102, 0.09); }
 
 .setup-grid {
   display: grid;
@@ -375,6 +377,7 @@ button { color: inherit; }
 }
 .objective-hud small,
 .objective-hud strong { display: block; }
+.match-beta { display: inline-block; margin-bottom: 4px; padding: 2px 6px; border-radius: 999px; color: #071015; background: var(--gold); font-size: 7px; font-weight: 900; letter-spacing: 0.1em; }
 .objective-hud small { color: var(--mint); font-size: 8px; font-weight: 850; letter-spacing: 0.12em; }
 .objective-hud strong { margin-top: 3px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .room-hud { left: 18px; bottom: 18px; display: flex; align-items: center; gap: 11px; padding: 8px 10px; color: var(--muted); font-size: 9px; }

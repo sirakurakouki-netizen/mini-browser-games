@@ -7,7 +7,7 @@ if (!gameplayCore) throw new Error("Shared gameplay core failed to load");
 const cosmeticCatalog = globalThis.ScaCosmeticCatalog;
 if (!cosmeticCatalog) throw new Error("Shared cosmetic catalog failed to load");
 
-const WORLD_SIZE = 5200;
+const WORLD_SIZE = gameplayCore.WORLD_RULES.size;
 const SERVER_HZ = 30;
 const STEP_SECONDS = 1 / SERVER_HZ;
 const MAX_CELLS = 64;
@@ -26,7 +26,7 @@ const TEAM_COLORS = ["#44d7b6", "#ff7a90", "#67e8f9", "#ffd166", "#a78bfa", "#f5
 const TEAM_NAMES = ["青曜", "赤潮", "蓝星", "金芒", "紫穹", "橙焰", "天河", "绯月", "翠光", "霜晶"];
 const BOT_NAMES = ["青柠", "星火", "乌龙", "极光", "海盐", "月影", "薄荷", "北辰", "流星", "夜航", "银杏", "木星"];
 const EVENT_ROTATION = [
-  { key: "harvest", label: "丰收潮汐", durationTicks: SERVER_HZ * 10, foodScale: 1.35 },
+  { key: "harvest", label: "丰收潮汐", durationTicks: SERVER_HZ * 10, foodTargetMult: 1.28, foodRateMult: 1.85, foodMassMult: 1.08 },
   { key: "rush", label: "轻盈时间", durationTicks: SERVER_HZ * 9, speedScale: 1.14 },
   { key: "merge", label: "极速合球", durationTicks: SERVER_HZ * 9, mergeScale: 0.5 }
 ];
@@ -85,6 +85,7 @@ export class AuthoritativeSimulation {
     this.groups = [];
     this.foods = [];
     this.foodGrid = new Map();
+    this.foodSpawnBank = 0;
     this.ejected = [];
     this.viruses = [];
     this.events = [];
@@ -148,11 +149,13 @@ export class AuthoritativeSimulation {
     });
 
     this.initializeObjectives();
-    this.foodTargetBase = clamp(
-      Math.round(FOOD_BASE_COUNT * Math.min(1.25, this.config.foodScale || 1)),
-      FOOD_BASE_COUNT,
-      Math.round(FOOD_MAX_COUNT * Math.max(1, this.config.foodScale || 1))
-    );
+    this.foodTargetBase = gameplayCore.foodTargetCount({
+      config: this.config,
+      elapsedSeconds: 0,
+      phase: 1,
+      baseCount: FOOD_BASE_COUNT,
+      maximumCount: FOOD_MAX_COUNT
+    });
     while (this.foods.length < this.foodTargetBase) this.spawnFood({ track: false });
     this.foodRevision = 1;
     this.foodDeltaFromRevision = this.foodRevision;
@@ -259,6 +262,17 @@ export class AuthoritativeSimulation {
     };
   }
 
+  randomPointInZone(margin = 120) {
+    if (this.config.rectArena || !this.safeZone?.radius) return this.randomPoint(margin);
+    const radius = Math.max(80, this.safeZone.radius - margin);
+    const angle = this.randomBetween(0, Math.PI * 2);
+    const distance = Math.sqrt(this.random()) * radius;
+    return {
+      x: clamp(this.safeZone.x + Math.cos(angle) * distance, this.arena.x + margin, this.arena.x + this.arena.width - margin),
+      y: clamp(this.safeZone.y + Math.sin(angle) * distance, this.arena.y + margin, this.arena.y + this.arena.height - margin)
+    };
+  }
+
   teamSpawnPoint(team) {
     if (team == null || !this.teamCount) return this.randomPoint(360);
     const angle = (Math.PI * 2 * team) / this.teamCount - Math.PI / 2;
@@ -317,13 +331,14 @@ export class AuthoritativeSimulation {
         pendingQuickMerge: false,
         pendingSpecial: false
       },
-      ai: { targetX: point.x, targetY: point.y, thinkTicks: 0 },
+      ai: { targetX: point.x, targetY: point.y, thinkTicks: 0, splitCooldownTicks: Math.round(this.randomBetween(0.8, 2.2) * SERVER_HZ), mode: "游走" },
       kills: 0,
       deaths: 0,
       lives,
       dead: false,
       eliminated: false,
       respawnTick: 0,
+      invincibleUntilTick: 0,
       ejectCooldown: 0,
       quickMergeCooldown: 0,
       specialCooldown: 0,
@@ -381,16 +396,37 @@ export class AuthoritativeSimulation {
   }
 
   spawnFood({ track = true } = {}) {
-    const point = this.randomPoint(45);
+    const point = this.random() < 0.78 ? this.randomPointInZone(45) : this.randomPoint(45);
+    const elapsedSeconds = Math.max(0, (this.serverTime - this.startedAt) / 1000);
+    const phase = Math.max(1, this.safeZone?.phase || 1);
+    const warmup = this.config.dominationWarmup || 55;
+    const ramp = this.config.lateFoodRamp ? clamp((elapsedSeconds - warmup) / 240, 0, 1) : 0;
+    const richChanceAdd = this.activeEvent && this.tick < this.activeEvent.endsAtTick
+      ? Math.max(0, Number(this.activeEvent.richChanceAdd) || 0)
+      : 0;
+    const richChance = clamp(
+      0.018 + phase * 0.006 + elapsedSeconds / 9000 + ramp * 0.055
+        + richChanceAdd
+        + (this.config.domination ? 0.055 : 0),
+      0.02,
+      this.config.domination ? 0.34 : 0.20
+    );
+    const rich = this.random() < richChance;
     const massScale = this.config.foodMassScale || 1;
-    const mass = this.randomBetween(2.3, 5.4) * massScale;
+    const eventMassScale = this.currentEventMultiplier("foodMassMult");
+    const baseMass = this.config.domination
+      ? (rich ? this.randomBetween(82 + ramp * 55, 170 + ramp * 120) : this.randomBetween(18 + ramp * 7, 44 + ramp * 18))
+      : (rich ? this.randomBetween(5.8, 10.5) : this.randomBetween(2.2, 5.2));
+    const mass = baseMass * eventMassScale * massScale;
+    const radiusScale = this.config.domination ? 2.25 : 1;
     const food = {
       id: this.nextEntityId("food"),
       x: point.x,
       y: point.y,
       mass,
-      radius: this.randomBetween(4, 6.4) * Math.sqrt(massScale),
-      color: Math.floor(this.random() * COLORS.length)
+      radius: (rich ? this.randomBetween(6.2, 8.6) : this.randomBetween(4.2, 6.4)) * Math.sqrt(eventMassScale * massScale) * radiusScale,
+      color: Math.floor(this.random() * COLORS.length),
+      rich
     };
     this.foods.push(food);
     this.addFoodToGrid(food);
@@ -505,18 +541,28 @@ export class AuthoritativeSimulation {
     return group.cells.reduce((sum, cell) => sum + (cell.dead ? 0 : cell.mass), 0);
   }
 
+  groupInvincible(group) {
+    return Boolean(group && !group.dead && group.invincibleUntilTick > this.tick);
+  }
+
   groupCenter(group) {
     let mass = 0;
     let x = 0;
     let y = 0;
+    let largest = 0;
+    let largestCell = null;
     for (const cell of group.cells) {
       if (cell.dead) continue;
       mass += cell.mass;
       x += cell.x * cell.mass;
       y += cell.y * cell.mass;
+      if (cell.radius > largest) {
+        largest = cell.radius;
+        largestCell = cell;
+      }
     }
-    if (!mass) return { x: WORLD_SIZE / 2, y: WORLD_SIZE / 2, mass: 0 };
-    return { x: x / mass, y: y / mass, mass };
+    if (!mass) return { x: WORLD_SIZE / 2, y: WORLD_SIZE / 2, mass: 0, largest: 0, largestCell: null };
+    return { x: x / mass, y: y / mass, mass, largest, largestCell };
   }
 
   sameTeam(first, second) {
@@ -530,37 +576,88 @@ export class AuthoritativeSimulation {
 
   updateAi(group) {
     const center = this.groupCenter(group);
+    group.ai.splitCooldownTicks = Math.max(0, (group.ai.splitCooldownTicks || 0) - 1);
     group.ai.thinkTicks -= 1;
     if (group.ai.thinkTicks <= 0) {
       group.ai.thinkTicks = Math.floor(this.randomBetween(8, 24));
       let target = null;
-      let targetDistance = Infinity;
+      let prey = null;
+      let preyScore = 0;
+      let threat = null;
+      let threatScore = 0;
       if (this.mode === "control" && this.controlPoints.length) {
         const point = this.controlPoints
           .filter(candidate => candidate.owner !== group.team)
           .sort((a, b) => distanceSquared(a, center) - distanceSquared(b, center))[0];
         if (point) target = point;
       }
-      for (const other of this.groups) {
-        if (other === group || other.dead || other.eliminated || this.sameTeam(group, other)) continue;
-        const otherCenter = this.groupCenter(other);
-        const distance = Math.hypot(otherCenter.x - center.x, otherCenter.y - center.y);
-        const aggressive = group.role === "boss" || center.mass > otherCenter.mass * 1.24;
-        if (aggressive && distance < targetDistance && distance < (group.role === "boss" ? 1600 : 900)) {
-          target = otherCenter;
-          targetDistance = distance;
+      const zoneDistance = this.safeZone ? Math.hypot(center.x - this.safeZone.x, center.y - this.safeZone.y) : 0;
+      const zonePressure = this.safeZone && zoneDistance > this.safeZone.radius - center.largest * 1.25;
+      if (zonePressure) {
+        target = this.safeZone;
+        group.ai.mode = "进圈";
+      } else if (!target && center.largestCell) {
+        const aggression = (this.config.respawn ? 1.08 : 1) * (this.config.aiAggroScale || 1);
+        for (const other of this.groups) {
+          if (other === group || other.dead || other.eliminated || this.sameTeam(group, other) || this.groupInvincible(other)) continue;
+          const otherCenter = this.groupCenter(other);
+          if (!otherCenter.largestCell) continue;
+          const distance = Math.max(1, Math.hypot(otherCenter.x - center.x, otherCenter.y - center.y));
+          const isThreat = otherCenter.largest > center.largest * 1.05
+            && distance < otherCenter.largest * 7.4 + 760;
+          if (isThreat) {
+            const score = otherCenter.largest / center.largest * 1450 / distance;
+            if (score > threatScore) {
+              threatScore = score;
+              threat = otherCenter;
+            }
+          }
+          const canEat = center.largest > otherCenter.largest * 1.08
+            && distance < center.largest * 10.5 * aggression + 820;
+          if (canEat) {
+            const score = otherCenter.largestCell.mass * 2 / distance;
+            if (score > preyScore) {
+              preyScore = score;
+              prey = otherCenter;
+            }
+          }
+        }
+        if (threat) {
+          const dx = center.x - threat.x;
+          const dy = center.y - threat.y;
+          const length = Math.hypot(dx, dy) || 1;
+          target = {
+            x: clamp(center.x + dx / length * 900, this.arena.x + 80, this.arena.x + this.arena.width - 80),
+            y: clamp(center.y + dy / length * 900, this.arena.y + 80, this.arena.y + this.arena.height - 80)
+          };
+          group.ai.mode = "逃跑";
+        } else if (prey) {
+          target = prey;
+          group.ai.mode = "追击";
+          const childMass = center.largestCell.mass * 0.5;
+          const canSplitEat = radiusFromMass(childMass) > prey.largest * 1.08
+            && Math.hypot(prey.x - center.largestCell.x, prey.y - center.largestCell.y) < center.largest * 5.8 + 470;
+          if (canSplitEat && group.ai.splitCooldownTicks <= 0 && group.cells.length < this.maxCellsForGroup(group)) {
+            group.input.pendingSplit = true;
+            group.ai.splitCooldownTicks = Math.round(this.randomBetween(1.35, 2.75) * SERVER_HZ);
+          }
         }
       }
-      if (!target) target = this.randomPoint(180);
+      if (!target) {
+        let nearestFood = null;
+        let nearestFoodDistance = Infinity;
+        for (const food of this.foods) {
+          const distance = distanceSquared(center, food);
+          if (distance < nearestFoodDistance) {
+            nearestFoodDistance = distance;
+            nearestFood = food;
+          }
+        }
+        target = nearestFood || this.randomPointInZone(120);
+        group.ai.mode = nearestFood ? "吃点" : "游走";
+      }
       group.ai.targetX = target.x;
       group.ai.targetY = target.y;
-      if (this.safeZone) {
-        const fromZone = Math.hypot(center.x - this.safeZone.x, center.y - this.safeZone.y);
-        if (fromZone > this.safeZone.radius * 0.88) {
-          group.ai.targetX = this.safeZone.x;
-          group.ai.targetY = this.safeZone.y;
-        }
-      }
     }
 
     const dx = group.ai.targetX - center.x;
@@ -571,7 +668,6 @@ export class AuthoritativeSimulation {
     group.input.targetX = group.ai.targetX;
     group.input.targetY = group.ai.targetY;
     group.input.eject = false;
-    if (group.role !== "boss" && this.random() < 0.002 && center.mass > 260) group.input.pendingSplit = true;
   }
 
   clampCell(cell) {
@@ -728,17 +824,42 @@ export class AuthoritativeSimulation {
   }
 
   desiredFoodTarget() {
-    return clamp(
-      Math.round(this.foodTargetBase * this.currentEventMultiplier("foodScale")),
-      FOOD_BASE_COUNT,
-      Math.round(FOOD_MAX_COUNT * Math.max(1, this.config.foodScale || 1))
-    );
+    return gameplayCore.foodTargetCount({
+      config: this.config,
+      elapsedSeconds: Math.max(0, (this.serverTime - this.startedAt) / 1000),
+      phase: this.safeZone?.phase || 1,
+      eventTargetMultiplier: this.currentEventMultiplier("foodTargetMult"),
+      baseCount: FOOD_BASE_COUNT,
+      maximumCount: FOOD_MAX_COUNT
+    });
+  }
+
+  desiredFoodSpawnRate() {
+    return gameplayCore.foodSpawnRate({
+      config: this.config,
+      elapsedSeconds: Math.max(0, (this.serverTime - this.startedAt) / 1000),
+      phase: this.safeZone?.phase || 1,
+      eventRateMultiplier: this.currentEventMultiplier("foodRateMult")
+    });
+  }
+
+  advanceFoodSpawns() {
+    const target = this.desiredFoodTarget();
+    const spawn = gameplayCore.advanceFoodSpawnBank({
+      bank: this.foodSpawnBank,
+      dt: STEP_SECONDS,
+      rate: this.desiredFoodSpawnRate(),
+      shortage: target - this.foods.length
+    });
+    this.foodSpawnBank = spawn.bank;
+    for (let index = 0; index < spawn.count; index += 1) this.spawnFood();
+    while (this.foods.length > target + 40) this.removeFood(this.foods[this.foods.length - 1]);
   }
 
   handleFoodEating() {
     const eaten = new Set();
     for (const group of this.groups) {
-      if (group.dead || group.eliminated) continue;
+      if (group.dead || group.eliminated || this.groupInvincible(group)) continue;
       for (const cell of group.cells) {
         if (cell.dead) continue;
         for (const food of this.nearbyFood(cell)) {
@@ -753,9 +874,7 @@ export class AuthoritativeSimulation {
       }
     }
     for (const food of eaten) this.removeFood(food);
-    const target = this.desiredFoodTarget();
-    while (this.foods.length < target) this.spawnFood();
-    while (this.foods.length > target + 40) this.removeFood(this.foods[this.foods.length - 1]);
+    this.advanceFoodSpawns();
   }
 
   updateEjected() {
@@ -801,7 +920,7 @@ export class AuthoritativeSimulation {
       const ageSeconds = item.ageTicks / SERVER_HZ;
       const owner = this.groups.find(candidate => candidate.id === item.ownerId);
       for (const group of consumed ? [] : this.groups) {
-        if (group.dead || group.eliminated) continue;
+        if (group.dead || group.eliminated || this.groupInvincible(group)) continue;
         const sameOwner = group.id === item.ownerId;
         if (sameOwner && ageSeconds < (owner?.human ? 0.32 : 0.48)) continue;
         if (!sameOwner && owner?.human && ageSeconds < 0.42) continue;
@@ -933,7 +1052,7 @@ export class AuthoritativeSimulation {
       }
       let burst = false;
       for (const group of this.groups) {
-        if (group.dead || group.eliminated || group.role === "boss") continue;
+        if (group.dead || group.eliminated || group.role === "boss" || this.groupInvincible(group)) continue;
         for (const cell of group.cells) {
           const hitScale = virus.kind === "big" ? 0.94 : virus.kind === "spore" ? 1 : 1.08;
           const biteScale = virus.kind === "big" ? 0.42 : virus.kind === "spore" ? 0.38 : 0.35;
@@ -964,7 +1083,8 @@ export class AuthoritativeSimulation {
     const noLives = Boolean(this.config.lives && victim.lives <= 0);
     const canRespawn = Boolean(this.config.respawn && !noLives && victim.role !== "boss");
     victim.eliminated = !canRespawn;
-    victim.respawnTick = canRespawn ? this.tick + SERVER_HZ * 3 : 0;
+    const respawnSeconds = victim.human ? 1.35 : this.randomBetween(1, 2.6);
+    victim.respawnTick = canRespawn ? this.tick + Math.round(SERVER_HZ * respawnSeconds) : 0;
     this.events.push({
       event: victim.eliminated ? "eliminated" : "downed",
       data: {
@@ -981,7 +1101,7 @@ export class AuthoritativeSimulation {
   handleCellEating() {
     const wraps = [];
     for (const group of this.groups) {
-      if (group.dead || group.eliminated) continue;
+      if (group.dead || group.eliminated || this.groupInvincible(group)) continue;
       for (const cell of group.cells) if (!cell.dead) wraps.push({ group, cell });
     }
     wraps.sort((a, b) => b.cell.mass - a.cell.mass);
@@ -1043,9 +1163,10 @@ export class AuthoritativeSimulation {
   updateRespawns() {
     for (const group of this.groups) {
       if (!group.dead || group.eliminated || this.tick < group.respawnTick) continue;
-      const point = this.teamSpawnPoint(group.team);
+      const point = group.team == null || !this.teamCount ? this.randomPointInZone(220) : this.teamSpawnPoint(group.team);
       group.dead = false;
       group.zoneExposureTicks = 0;
+      group.invincibleUntilTick = this.tick + Math.round((this.config.respawnShield || 1.8) * SERVER_HZ);
       group.cells = [this.createCell(group, point.x, point.y, this.startMassForRole(group.role, group.human, group.human ? group.index : 24))];
       group.input.pendingSplit = false;
       this.events.push({ event: "respawned", data: { playerId: group.id, name: group.name, lives: group.lives } });

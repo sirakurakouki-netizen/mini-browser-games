@@ -17,7 +17,7 @@ const DEFAULT_FRONTEND_ROOT = resolve(HERE, "../frontend");
 const DEFAULT_HOST = process.env.HOST || "0.0.0.0";
 const requestedPort = Number.parseInt(process.env.PORT || "25555", 10);
 const DEFAULT_PORT = Number.isInteger(requestedPort) && requestedPort >= 0 && requestedPort < 65536 ? requestedPort : 25555;
-const VERSION = "3.6.0-lan";
+const VERSION = "3.7.0-beta.2-lan";
 const MAX_TELEMETRY_BYTES = 16 * 1024;
 const MAX_API_BODY_BYTES = 24 * 1024;
 

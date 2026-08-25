@@ -52,6 +52,7 @@ const checksums = [
 await writeFile(join(versionRoot, "SHA256SUMS.txt"), `${checksums.join("\r\n")}\r\n`, "utf8");
 await writeFile(join(versionRoot, "使用说明.txt"), [
   `星团大作战 ${packageJson.version}（Windows x64）`,
+  packageJson.version.includes("beta") ? "注意：这是联机测试版，不替代 v3.6.0 稳定版。AI、完整随机事件与多阶段安全区仍在继续对齐。" : "",
   "",
   `安装版：双击“${basename(installerTarget)}”，可在安装向导中选择安装位置、桌面快捷方式和当前用户/所有用户安装。`,
   `便携版：完整解压“${basename(portableTarget)}”，再双击解压目录内的 StarClusterArena.exe。`,

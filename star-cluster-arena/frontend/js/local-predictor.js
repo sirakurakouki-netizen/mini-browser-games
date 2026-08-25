@@ -31,8 +31,8 @@
     const arena = snapshot.arena || {
       x: 0,
       y: 0,
-      width: finite(snapshot.world?.width, 5200),
-      height: finite(snapshot.world?.height, 5200)
+      width: finite(snapshot.world?.width, gameplayCore.WORLD_RULES.size),
+      height: finite(snapshot.world?.height, gameplayCore.WORLD_RULES.size)
     };
     let direction = options.currentInput || { dx: 0, dy: 0 };
     const estimateInputTime = typeof options.estimateInputTime === "function"
