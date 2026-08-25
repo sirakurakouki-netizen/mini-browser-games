@@ -1,14 +1,25 @@
 import { getModeConfig, normalizeMode } from "./modes.mjs";
+import "../../frontend/js/gameplay-core.js";
+import "../../frontend/js/cosmetic-catalog.js";
+
+const gameplayCore = globalThis.ScaGameplayCore;
+if (!gameplayCore) throw new Error("Shared gameplay core failed to load");
+const cosmeticCatalog = globalThis.ScaCosmeticCatalog;
+if (!cosmeticCatalog) throw new Error("Shared cosmetic catalog failed to load");
 
 const WORLD_SIZE = 5200;
-const SERVER_HZ = 20;
+const SERVER_HZ = 30;
 const STEP_SECONDS = 1 / SERVER_HZ;
 const MAX_CELLS = 64;
 const DEFAULT_MAX_CELLS = 16;
 const MIN_CELL_MASS = 10;
-const SPLIT_MIN_MASS = 36;
-const EJECT_MIN_MASS = 32;
+const SPLIT_MIN_MASS = gameplayCore.MOVEMENT.splitMinimumMass;
+const EJECT_MIN_MASS = gameplayCore.MOVEMENT.ejectMinimumMass;
 const FOOD_BUCKET_SIZE = 180;
+const FOOD_BASE_COUNT = 2100;
+const FOOD_MAX_COUNT = 3600;
+const VIRUS_MASS = 95;
+const BIG_VIRUS_MASS = 260;
 const FULL_FOOD_SNAPSHOT_INTERVAL_TICKS = SERVER_HZ * 5;
 const COLORS = ["#44d7b6", "#67e8f9", "#ffd166", "#ff7a90", "#a78bfa", "#f59e0b", "#7dd3fc", "#f472b6"];
 const TEAM_COLORS = ["#44d7b6", "#ff7a90", "#67e8f9", "#ffd166", "#a78bfa", "#f59e0b", "#7dd3fc", "#f472b6", "#9cff6e", "#fb7185"];
@@ -36,7 +47,7 @@ function clamp(value, minimum, maximum) {
 }
 
 function radiusFromMass(mass) {
-  return Math.max(5, Math.sqrt(Math.max(1, mass)) * 4);
+  return gameplayCore.radiusFromMass(mass);
 }
 
 function rounded(value) {
@@ -86,6 +97,7 @@ export class AuthoritativeSimulation {
     this.virusDeltaFromRevision = 0;
     this.virusChangedThisTick = false;
     this.virusAdded = new Map();
+    this.virusUpdated = new Map();
     this.virusRemoved = new Set();
     this.inStep = false;
     this.activeEvent = null;
@@ -106,6 +118,7 @@ export class AuthoritativeSimulation {
         name: player.name,
         human: true,
         connected: player.connected !== false,
+        cosmetics: cosmeticCatalog.normalizeProfile(player.cosmetics),
         role: "player"
       })),
       ...Array.from({ length: totalBots }, (_, index) => ({
@@ -113,6 +126,10 @@ export class AuthoritativeSimulation {
         name: BOT_NAMES[index % BOT_NAMES.length] + (index >= BOT_NAMES.length ? String(Math.floor(index / BOT_NAMES.length) + 1) : ""),
         human: false,
         connected: true,
+        cosmetics: cosmeticCatalog.normalizeProfile({
+          skin: cosmeticCatalog.SKINS[index % 9].key,
+          spore: cosmeticCatalog.SPORES[index % 9].key
+        }),
         role: this.mode === "demon"
           ? (index === 0 ? "boss" : index <= (this.config.demon?.maximumMinions || 3) ? "minion" : "ally")
           : "player"
@@ -122,13 +139,20 @@ export class AuthoritativeSimulation {
 
     participants.forEach((participant, index) => {
       const team = this.teamForParticipant(participant, index, humans.length);
-      const color = team == null ? COLORS[index % COLORS.length] : TEAM_COLORS[team % TEAM_COLORS.length];
+      const skin = cosmeticCatalog.definition("skin", participant.cosmetics?.skin);
+      const color = participant.human
+        ? (skin?.color || COLORS[index % COLORS.length])
+        : team == null ? COLORS[index % COLORS.length] : TEAM_COLORS[team % TEAM_COLORS.length];
       this.groups.push(this.createGroup({ ...participant, team, color, index }));
       if (team != null && !this.teamScores.has(team)) this.teamScores.set(team, 0);
     });
 
     this.initializeObjectives();
-    this.foodTargetBase = clamp(Math.round((420 + this.groups.length * 35) * (this.config.foodScale || 1)), 420, 900);
+    this.foodTargetBase = clamp(
+      Math.round(FOOD_BASE_COUNT * Math.min(1.25, this.config.foodScale || 1)),
+      FOOD_BASE_COUNT,
+      Math.round(FOOD_MAX_COUNT * Math.max(1, this.config.foodScale || 1))
+    );
     while (this.foods.length < this.foodTargetBase) this.spawnFood({ track: false });
     this.foodRevision = 1;
     this.foodDeltaFromRevision = this.foodRevision;
@@ -138,6 +162,7 @@ export class AuthoritativeSimulation {
     this.virusRevision = this.viruses.length ? 1 : 0;
     this.virusDeltaFromRevision = this.virusRevision;
     this.virusAdded.clear();
+    this.virusUpdated.clear();
     this.virusRemoved.clear();
   }
 
@@ -244,10 +269,12 @@ export class AuthoritativeSimulation {
     };
   }
 
-  startMassForRole(role) {
+  startMassForRole(role, human = true, index = 0) {
     if (role === "boss") return this.config.demon?.bossMass || 8500;
     if (role === "minion") return this.config.demon?.minionMass || 850;
-    return this.config.startMass || 160;
+    if (human) return this.config.startMass || 160;
+    const range = gameplayCore.botStartMassRange(index, this.config);
+    return this.randomBetween(range.minimum, range.maximum);
   }
 
   createCell(group, x, y, mass = 130) {
@@ -265,7 +292,7 @@ export class AuthoritativeSimulation {
     };
   }
 
-  createGroup({ id, name, human, connected, color, team, role, index }) {
+  createGroup({ id, name, human, connected, cosmetics, color, team, role, index }) {
     const point = this.teamSpawnPoint(team);
     const lives = Math.max(1, Number(this.config.lives) || 1);
     const group = {
@@ -276,9 +303,20 @@ export class AuthoritativeSimulation {
       color,
       team,
       role,
+      cosmetics: cosmeticCatalog.normalizeProfile(cosmetics),
       index,
       cells: [],
-      input: { seq: 0, dx: 0, dy: 0, pendingSplit: false, eject: false, pendingQuickMerge: false, pendingSpecial: false },
+      input: {
+        seq: 0,
+        dx: 0,
+        dy: 0,
+        targetX: point.x,
+        targetY: point.y,
+        pendingSplit: false,
+        eject: false,
+        pendingQuickMerge: false,
+        pendingSpecial: false
+      },
       ai: { targetX: point.x, targetY: point.y, thinkTicks: 0 },
       kills: 0,
       deaths: 0,
@@ -292,13 +330,21 @@ export class AuthoritativeSimulation {
       zoneExposureTicks: 0,
       bossAbilityTick: role === "boss" ? SERVER_HZ * 8 : 0
     };
-    group.cells.push(this.createCell(group, point.x, point.y, this.startMassForRole(role)));
+    group.cells.push(this.createCell(group, point.x, point.y, this.startMassForRole(role, human, index)));
     return group;
   }
 
   maxCellsForGroup(group) {
     if (group.role === "boss") return 1;
-    return clamp(Number(this.config.maxCells) || DEFAULT_MAX_CELLS, 1, MAX_CELLS);
+    const configured = !group.human && this.config.botMaxCells ? this.config.botMaxCells : this.config.maxCells;
+    return clamp(Number(configured) || DEFAULT_MAX_CELLS, 1, MAX_CELLS);
+  }
+
+  mergeCooldownTicks(mass, type) {
+    return Math.round(gameplayCore.mergeCooldownSeconds(mass, type, {
+      eventMultiplier: this.currentEventMultiplier("mergeScale"),
+      modeMultiplier: this.config.mergeScale || 1
+    }) * SERVER_HZ);
   }
 
   foodKey(x, y) {
@@ -362,7 +408,8 @@ export class AuthoritativeSimulation {
       y: rounded(virus.y),
       radius: rounded(virus.radius),
       color: virus.color,
-      spore: virus.spore
+      kind: virus.kind,
+      spore: virus.kind === "spore"
     };
   }
 
@@ -376,17 +423,41 @@ export class AuthoritativeSimulation {
     else this.virusRevision += 1;
   }
 
+  markVirusUpdated(virus) {
+    this.markVirusChanged();
+    if (this.virusAdded.has(virus.id)) {
+      this.virusAdded.set(virus.id, virus);
+      return;
+    }
+    this.virusUpdated.set(virus.id, virus);
+  }
+
   spawnVirus({ track = true, values = null } = {}) {
     const point = this.randomPoint(220);
-    const spore = Boolean(this.config.viruses?.sporeOnly || this.mode === "spore");
+    const forcedKind = values?.kind || (values && Object.hasOwn(values, "spore") ? (values.spore ? "spore" : "small") : "");
+    const sporeChance = this.config.viruses?.sporeChance || 0;
+    const bigChance = this.config.viruses?.bigChance || 0.08;
+    const kind = forcedKind || (this.config.viruses?.sporeOnly || this.mode === "spore"
+      ? "spore"
+      : this.random() < sporeChance ? "spore" : this.random() < bigChance ? "big" : "small");
+    const spore = kind === "spore";
+    const big = kind === "big";
+    const baseMass = gameplayCore.virusBaseMass(kind, values?.baseMass);
     const virus = {
       id: this.nextEntityId("virus"),
       x: point.x,
       y: point.y,
-      radius: spore ? this.randomBetween(48, 66) : this.randomBetween(56, 72),
-      color: spore ? "#f472b6" : "#5eea80",
-      spore,
-      ...(values || {})
+      radius: spore ? this.randomBetween(42, 54) : big ? this.randomBetween(68, 86) : this.randomBetween(38, 50),
+      mass: baseMass,
+      baseMass,
+      vx: 0,
+      vy: 0,
+      launched: false,
+      ageSeconds: 0,
+      color: spore ? "#f472b6" : big ? "#c7ff6f" : "#5eea80",
+      ...(values || {}),
+      kind,
+      spore
     };
     this.viruses.push(virus);
     if (track) {
@@ -400,6 +471,7 @@ export class AuthoritativeSimulation {
     const index = this.viruses.indexOf(virus);
     if (index >= 0) this.viruses.splice(index, 1);
     this.markVirusChanged();
+    this.virusUpdated.delete(virus.id);
     if (this.virusAdded.delete(virus.id)) return;
     this.virusRemoved.add(virus.id);
   }
@@ -416,6 +488,12 @@ export class AuthoritativeSimulation {
     group.input.seq = input.seq;
     group.input.dx = clamp(Number(input.dx) || 0, -1, 1);
     group.input.dy = clamp(Number(input.dy) || 0, -1, 1);
+    const targetX = Number(input.targetX);
+    const targetY = Number(input.targetY);
+    if (input.targetX != null && input.targetY != null && Number.isFinite(targetX) && Number.isFinite(targetY)) {
+      group.input.targetX = clamp(targetX, -WORLD_SIZE, WORLD_SIZE * 2);
+      group.input.targetY = clamp(targetY, -WORLD_SIZE, WORLD_SIZE * 2);
+    }
     group.input.pendingSplit ||= Boolean(input.split);
     group.input.eject = Boolean(input.eject);
     group.input.pendingQuickMerge ||= Boolean(input.quickMerge);
@@ -490,6 +568,8 @@ export class AuthoritativeSimulation {
     const length = Math.hypot(dx, dy) || 1;
     group.input.dx = dx / length;
     group.input.dy = dy / length;
+    group.input.targetX = group.ai.targetX;
+    group.input.targetY = group.ai.targetY;
     group.input.eject = false;
     if (group.role !== "boss" && this.random() < 0.002 && center.mass > 260) group.input.pendingSplit = true;
   }
@@ -501,9 +581,8 @@ export class AuthoritativeSimulation {
 
   splitGroup(group) {
     if (group.role === "boss") return;
-    const directionLength = Math.hypot(group.input.dx, group.input.dy) || 1;
-    const dx = group.input.dx / directionLength;
-    const dy = group.input.dy / directionLength;
+    const center = this.groupCenter(group);
+    const target = gameplayCore.targetFromInput(group.input, center);
     const sources = [...group.cells].filter(cell => !cell.dead && cell.mass >= SPLIT_MIN_MASS);
     const maximum = this.maxCellsForGroup(group);
     for (const cell of sources) {
@@ -511,11 +590,12 @@ export class AuthoritativeSimulation {
       const half = cell.mass * 0.5;
       cell.mass = half;
       cell.radius = radiusFromMass(half);
-      cell.mergeTicks = Math.round(160 * (this.config.mergeScale || 1) * this.currentEventMultiplier("mergeScale"));
-      const child = this.createCell(group, cell.x + dx * (cell.radius + 14), cell.y + dy * (cell.radius + 14), half);
+      cell.mergeTicks = this.mergeCooldownTicks(half, "split");
+      const launch = gameplayCore.splitVelocity(cell, target);
+      const child = this.createCell(group, cell.x + launch.x * (cell.radius + 14), cell.y + launch.y * (cell.radius + 14), half);
       this.clampCell(child);
-      child.vx = cell.vx + dx * 560;
-      child.vy = cell.vy + dy * 560;
+      child.vx = launch.vx;
+      child.vy = launch.vy;
       child.mergeTicks = cell.mergeTicks;
       group.cells.push(child);
     }
@@ -524,14 +604,17 @@ export class AuthoritativeSimulation {
   ejectMass(group) {
     if (group.ejectCooldown > 0 || group.role === "boss") return;
     group.ejectCooldown = 2;
-    const length = Math.hypot(group.input.dx, group.input.dy) || 1;
-    const dx = group.input.dx / length;
-    const dy = group.input.dy / length;
+    const center = this.groupCenter(group);
+    const target = gameplayCore.targetFromInput(group.input, center);
     const cells = [...group.cells]
       .filter(cell => !cell.dead && cell.mass >= EJECT_MIN_MASS)
       .sort((a, b) => b.mass - a.mass)
       .slice(0, 4);
+    const sporeAppearance = cosmeticCatalog.definition("spore", group.cosmetics?.spore);
     for (const cell of cells) {
+      const direction = gameplayCore.directionToTarget(cell, target);
+      const dx = direction.distance > 0 ? direction.x : 1;
+      const dy = direction.distance > 0 ? direction.y : 0;
       const amount = Math.min(13, Math.max(6, cell.mass * 0.08));
       if (cell.mass - amount < MIN_CELL_MASS * 2) continue;
       cell.mass -= amount;
@@ -546,7 +629,9 @@ export class AuthoritativeSimulation {
         mass: amount,
         radius: radiusFromMass(amount),
         ageTicks: 0,
-        color: group.color
+        color: sporeAppearance?.color || group.color,
+        accent: sporeAppearance?.accent || "#ffffff",
+        spore: sporeAppearance?.key || "mint"
       });
     }
     if (this.ejected.length > 420) this.ejected.splice(0, this.ejected.length - 420);
@@ -609,17 +694,15 @@ export class AuthoritativeSimulation {
     group.specialCooldown = Math.max(0, group.specialCooldown - 1);
 
     const modeSpeed = (this.config.speedScale || 1) * this.currentEventMultiplier("speedScale") * (group.role === "boss" ? 0.72 : 1);
+    const target = gameplayCore.targetFromInput(group.input, this.groupCenter(group));
     for (const cell of group.cells) {
       if (cell.dead) continue;
-      const baseSpeed = 330 / (1 + cell.radius / 92) * modeSpeed;
-      const targetVx = group.input.dx * baseSpeed;
-      const targetVy = group.input.dy * baseSpeed;
-      cell.vx += (targetVx - cell.vx) * 0.2;
-      cell.vy += (targetVy - cell.vy) * 0.2;
-      cell.vx *= 0.965;
-      cell.vy *= 0.965;
-      cell.x += cell.vx * STEP_SECONDS;
-      cell.y += cell.vy * STEP_SECONDS;
+      gameplayCore.applyMovement(cell, target, STEP_SECONDS, {
+        speedScale: modeSpeed,
+        steerRate: group.human && group.connected
+          ? gameplayCore.MOVEMENT.playerSteerRate
+          : gameplayCore.MOVEMENT.aiSteerRate
+      });
       this.clampCell(cell);
       const decay = group.role === "boss" ? 0.0002 : 0.0012;
       cell.mass = Math.max(MIN_CELL_MASS, cell.mass * (1 - STEP_SECONDS * decay));
@@ -645,7 +728,11 @@ export class AuthoritativeSimulation {
   }
 
   desiredFoodTarget() {
-    return clamp(Math.round(this.foodTargetBase * this.currentEventMultiplier("foodScale")), 420, 900);
+    return clamp(
+      Math.round(this.foodTargetBase * this.currentEventMultiplier("foodScale")),
+      FOOD_BASE_COUNT,
+      Math.round(FOOD_MAX_COUNT * Math.max(1, this.config.foodScale || 1))
+    );
   }
 
   handleFoodEating() {
@@ -681,52 +768,158 @@ export class AuthoritativeSimulation {
       item.y += item.vy * STEP_SECONDS;
       this.clampCell(item);
       let consumed = false;
-      if (item.ageTicks > 5) {
-        for (const group of this.groups) {
-          if (group.dead || group.eliminated) continue;
-          for (const cell of group.cells) {
-            if (cell.dead || (group.id === item.ownerId && item.ageTicks < 18)) continue;
-            const reach = Math.max(5, cell.radius - item.radius * 0.15);
-            if (distanceSquared(cell, item) <= reach * reach) {
-              cell.mass += item.mass;
-              cell.radius = radiusFromMass(cell.mass);
-              consumed = true;
-              break;
-            }
+      for (const virus of this.viruses) {
+        if (!gameplayCore.ejectedHitsVirus(item, virus)) continue;
+        const feed = gameplayCore.virusFeedPlan({
+          kind: virus.kind,
+          currentMass: virus.mass,
+          baseMass: virus.baseMass,
+          ejectedMass: item.mass
+        });
+        virus.mass = feed.nextMass;
+        consumed = true;
+        if (feed.shouldLaunch) {
+          virus.mass = feed.baseMass;
+          virus.baseMass = feed.baseMass;
+          const maximum = Math.max(0, Number(this.config.viruses?.maximum ?? this.config.viruses?.count) || 0);
+          if (this.viruses.length < maximum) {
+            const launch = gameplayCore.virusLaunchPlan({
+              virus,
+              seed: item,
+              baseMass: feed.baseMass,
+              bigRadius: virus.kind === "big" ? this.randomBetween(62, 76) : undefined,
+              minimumX: this.arena.x + 120,
+              maximumX: this.arena.x + this.arena.width - 120,
+              minimumY: this.arena.y + 120,
+              maximumY: this.arena.y + this.arena.height - 120
+            });
+            this.spawnVirus({ values: { ...launch, color: virus.color } });
           }
-          if (consumed) break;
         }
+        break;
+      }
+      const ageSeconds = item.ageTicks / SERVER_HZ;
+      const owner = this.groups.find(candidate => candidate.id === item.ownerId);
+      for (const group of consumed ? [] : this.groups) {
+        if (group.dead || group.eliminated) continue;
+        const sameOwner = group.id === item.ownerId;
+        if (sameOwner && ageSeconds < (owner?.human ? 0.32 : 0.48)) continue;
+        if (!sameOwner && owner?.human && ageSeconds < 0.42) continue;
+        if (!sameOwner && ageSeconds < 0.16) continue;
+        for (const cell of group.cells) {
+          if (cell.dead) continue;
+          if (gameplayCore.canCollectEjected({
+            sameOwner,
+            playerOwned: Boolean(owner?.human),
+            ageSeconds,
+            cellRadius: cell.radius,
+            itemRadius: item.radius,
+            distanceSquared: distanceSquared(cell, item)
+          })) {
+            const teammate = !sameOwner && owner && owner.team != null && owner.team === group.team;
+            cell.mass += item.mass * (sameOwner ? 1 : teammate ? 0.96 : 0.92);
+            cell.radius = radiusFromMass(cell.mass);
+            consumed = true;
+            break;
+          }
+        }
+        if (consumed) break;
       }
       if (consumed || item.ageTicks > 300) this.ejected.splice(index, 1);
     }
   }
 
-  burstVirus(group, cell, virus) {
+  updateViruses() {
+    for (const virus of this.viruses) {
+      if (!virus.launched) continue;
+      const motion = gameplayCore.advanceLaunchedVirus(virus, STEP_SECONDS);
+      virus.x = motion.x;
+      virus.y = motion.y;
+      virus.vx = motion.vx;
+      virus.vy = motion.vy;
+      virus.ageSeconds = motion.ageSeconds;
+      virus.launched = motion.launched;
+      this.clampCell(virus);
+      this.markVirusUpdated(virus);
+    }
+  }
+
+  burstSporeVirus(group, cell, virus) {
     this.removeVirus(virus);
-    const sporeMode = virus.spore || this.mode === "spore";
-    const lossRatio = sporeMode ? 0.5 : 0.28;
-    const loss = Math.min(cell.mass - MIN_CELL_MASS, Math.max(0, cell.mass * lossRatio));
-    if (loss <= 0) return;
+    const plan = gameplayCore.sporeBurstPlan({
+      cellMass: cell.mass,
+      lossMinimum: this.config.viruses?.massLossMinimum ?? this.config.viruses?.massLossRatio ?? 0.5,
+      lossMaximum: this.config.viruses?.massLossMaximum ?? this.config.viruses?.massLossRatio ?? 0.5,
+      minimumPieces: this.config.viruses?.burstPiecesMinimum ?? 18,
+      maximumPieces: this.config.viruses?.burstPiecesMaximum ?? 30,
+      pieceMass: this.config.viruses?.burstPieceMass ?? 17
+    });
+    if (!plan.canBurst) {
+      cell.mass += (virus.mass || VIRUS_MASS * 0.92) * 0.42;
+      cell.radius = radiusFromMass(cell.mass);
+      if (this.viruses.length < (this.config.viruses?.count || 0)) this.spawnVirus();
+      return;
+    }
+    const { loss, pieces, pieceMass } = plan;
     cell.mass -= loss;
     cell.radius = radiusFromMass(cell.mass);
-    const pieces = sporeMode ? Math.floor(this.randomBetween(18, 31)) : Math.floor(this.randomBetween(6, 11));
-    const pieceMass = Math.max(2, loss / pieces * 0.9);
+    const sporeAppearance = cosmeticCatalog.definition("spore", group.cosmetics?.spore);
     for (let piece = 0; piece < pieces; piece += 1) {
       const angle = (Math.PI * 2 * piece) / pieces + this.randomBetween(-0.12, 0.12);
       this.ejected.push({
         id: this.nextEntityId("spore"),
-        ownerId: null,
+        ownerId: group.id,
         x: cell.x + Math.cos(angle) * (cell.radius + 12),
         y: cell.y + Math.sin(angle) * (cell.radius + 12),
-        vx: Math.cos(angle) * this.randomBetween(180, 380),
-        vy: Math.sin(angle) * this.randomBetween(180, 380),
+        vx: cell.vx * 0.18 + Math.cos(angle) * this.randomBetween(420, 720),
+        vy: cell.vy * 0.18 + Math.sin(angle) * this.randomBetween(420, 720),
         mass: pieceMass,
         radius: radiusFromMass(pieceMass),
-        ageTicks: 0,
-        color: sporeMode ? "#f472b6" : "#5eea80"
+        ageTicks: group.human ? Math.round(gameplayCore.VIRUS_RULES.humanSporeInitialAgeSeconds * SERVER_HZ) : 0,
+        color: sporeAppearance?.color || "#f472b6",
+        accent: sporeAppearance?.accent || "#ffffff",
+        spore: sporeAppearance?.key || "mint"
       });
     }
-    this.events.push({ event: "virus-burst", data: { playerId: group.id, virusId: virus.id, spore: sporeMode } });
+    this.events.push({ event: "virus-burst", data: { playerId: group.id, virusId: virus.id, spore: true } });
+    if (this.viruses.length < (this.config.viruses?.count || 0)) this.spawnVirus();
+  }
+
+  splitCellByVirus(group, cell, virus) {
+    this.removeVirus(virus);
+    const index = group.cells.indexOf(cell);
+    if (index < 0) return;
+    const big = virus.kind === "big";
+    const available = this.maxCellsForGroup(group) - group.cells.length + 1;
+    const plan = gameplayCore.virusSplitPlan({
+      cellMass: cell.mass,
+      virusMass: virus.mass || (big ? BIG_VIRUS_MASS : VIRUS_MASS),
+      big,
+      player: group.human,
+      available,
+      playerPieceCap: big ? this.config.viruses?.playerBigPieces : this.config.viruses?.playerSmallPieces
+    });
+    if (!plan.split) {
+      cell.mass = plan.totalMass;
+      cell.radius = radiusFromMass(plan.totalMass);
+      cell.mergeTicks = Math.max(cell.mergeTicks, this.mergeCooldownTicks(plan.totalMass, big ? "virus-big" : "virus"));
+    } else {
+      group.cells.splice(index, 1);
+      for (let piece = 0; piece < plan.pieces; piece += 1) {
+        const angle = (Math.PI * 2 * piece) / plan.pieces + this.randomBetween(-0.16, 0.16);
+        const child = this.createCell(
+          group,
+          cell.x + Math.cos(angle) * cell.radius * 0.18,
+          cell.y + Math.sin(angle) * cell.radius * 0.18,
+          plan.pieceMass
+        );
+        child.vx = cell.vx * 0.24 + Math.cos(angle) * this.randomBetween(big ? 390 : 330, big ? 640 : 560);
+        child.vy = cell.vy * 0.24 + Math.sin(angle) * this.randomBetween(big ? 390 : 330, big ? 640 : 560);
+        child.mergeTicks = this.mergeCooldownTicks(plan.pieceMass, big ? "virus-big" : "virus");
+        group.cells.push(child);
+      }
+    }
+    this.events.push({ event: "virus-split", data: { playerId: group.id, virusId: virus.id, kind: virus.kind } });
     if (this.viruses.length < (this.config.viruses?.count || 0)) this.spawnVirus();
   }
 
@@ -742,10 +935,13 @@ export class AuthoritativeSimulation {
       for (const group of this.groups) {
         if (group.dead || group.eliminated || group.role === "boss") continue;
         for (const cell of group.cells) {
-          if (cell.dead || cell.radius < virus.radius * 0.72) continue;
-          const reach = Math.max(12, cell.radius - virus.radius * 0.18);
+          const hitScale = virus.kind === "big" ? 0.94 : virus.kind === "spore" ? 1 : 1.08;
+          const biteScale = virus.kind === "big" ? 0.42 : virus.kind === "spore" ? 0.38 : 0.35;
+          if (cell.dead || cell.radius <= virus.radius * hitScale) continue;
+          const reach = cell.radius + virus.radius * biteScale;
           if (distanceSquared(cell, virus) <= reach * reach) {
-            this.burstVirus(group, cell, virus);
+            if (virus.kind === "spore") this.burstSporeVirus(group, cell, virus);
+            else this.splitCellByVirus(group, cell, virus);
             burst = true;
             break;
           }
@@ -850,7 +1046,7 @@ export class AuthoritativeSimulation {
       const point = this.teamSpawnPoint(group.team);
       group.dead = false;
       group.zoneExposureTicks = 0;
-      group.cells = [this.createCell(group, point.x, point.y, this.startMassForRole(group.role))];
+      group.cells = [this.createCell(group, point.x, point.y, this.startMassForRole(group.role, group.human, group.human ? group.index : 24))];
       group.input.pendingSplit = false;
       this.events.push({ event: "respawned", data: { playerId: group.id, name: group.name, lives: group.lives } });
     }
@@ -1023,6 +1219,7 @@ export class AuthoritativeSimulation {
     for (const group of this.groups) this.updateMovement(group);
     this.handleOwnCellSeparation();
     this.updateEjected();
+    this.updateViruses();
     this.handleFoodEating();
     this.handleVirusCollisions();
     this.handleCellEating();
@@ -1099,6 +1296,7 @@ export class AuthoritativeSimulation {
       type: this.config.ranking || "mass",
       label: this.config.label,
       description: this.config.description,
+      movementSpeedScale: (this.config.speedScale || 1) * this.currentEventMultiplier("speedScale"),
       activeEvent: this.activeEvent ? {
         key: this.activeEvent.key,
         label: this.activeEvent.label,
@@ -1144,6 +1342,7 @@ export class AuthoritativeSimulation {
         lives: group.lives,
         team: group.team,
         role: group.role,
+        cosmetics: group.cosmetics,
         ackInputSeq: group.input.seq,
         respawnRemaining: group.dead && !group.eliminated ? rounded(Math.max(0, (group.respawnTick - this.tick) / SERVER_HZ)) : 0,
         quickMergeCooldown: rounded(group.quickMergeCooldown / SERVER_HZ),
@@ -1167,7 +1366,10 @@ export class AuthoritativeSimulation {
         vx: rounded(item.vx),
         vy: rounded(item.vy),
         radius: rounded(item.radius),
-        color: item.color
+        color: item.color,
+        ownerId: item.ownerId,
+        spore: item.spore,
+        accent: item.accent
       })),
       safeZone: this.safeZone ? {
         x: rounded(this.safeZone.x),
@@ -1208,7 +1410,8 @@ export class AuthoritativeSimulation {
         fromRevision: this.virusDeltaFromRevision,
         toRevision: this.virusRevision,
         added: [...this.virusAdded.values()].map(virus => this.publicVirus(virus)),
-        removed: [...this.virusRemoved]
+        removed: [...this.virusRemoved],
+        updated: [...this.virusUpdated.values()].map(virus => this.publicVirus(virus))
       };
     }
     return snapshot;
@@ -1219,6 +1422,7 @@ export class AuthoritativeSimulation {
     this.foodRemoved.clear();
     this.foodDeltaFromRevision = this.foodRevision;
     this.virusAdded.clear();
+    this.virusUpdated.clear();
     this.virusRemoved.clear();
     this.virusDeltaFromRevision = this.virusRevision;
   }

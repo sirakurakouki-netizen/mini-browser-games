@@ -12,12 +12,12 @@
   <div class="space-layer" aria-hidden="true"></div>
 
   <header class="topbar" id="topbar">
-    <a class="back-link" href="./index.html" aria-label="返回单机大厅">← 单机大厅</a>
+    <a class="back-link" href="./index.html" aria-label="返回游戏主菜单">← 游戏主菜单</a>
     <div class="brand-lockup">
       <span class="brand-orb"></span>
       <div>
         <strong>星团大作战</strong>
-        <small>局域网联机测试 · 服务器权威</small>
+        <small>局域网联机 · 服务器权威</small>
       </div>
     </div>
     <div class="connection-pill" id="connectionPill" data-state="idle">
@@ -27,7 +27,7 @@
 
   <main class="lobby-shell" id="lobbyView">
     <section class="hero-card">
-      <div class="eyebrow">LAN MULTIPLAYER / SCA-LAN-V2</div>
+      <div class="eyebrow">LAN MULTIPLAYER / SCA-LAN-V6</div>
       <h1>和同一网络里的朋友<br>进入同一个星团</h1>
       <p>无需输入 IP。创建房间后，其他玩家会在局域网房间列表中自动看到它。</p>
       <div class="notice-line">
@@ -71,17 +71,10 @@
               <option value="8" selected>8 人</option>
             </select>
           </label>
-          <label>
-            <span class="field-label">AI 数量</span>
-            <select id="botCountSelect" class="select-input">
-              <option value="0">不添加</option>
-              <option value="2">2 个</option>
-              <option value="4">4 个</option>
-              <option value="6" selected>6 个</option>
-              <option value="8">8 个</option>
-              <option value="12">12 个</option>
-            </select>
-          </label>
+          <div class="auto-fill-info" aria-live="polite">
+            <span class="field-label">AI 自动补位</span>
+            <strong id="autoFillPreview">补足到 100 个参赛者</strong>
+          </div>
         </div>
         <button class="primary-button" id="createRoomBtn" type="button">
           <span>创建局域网房间</span><b>＋</b>
@@ -125,7 +118,7 @@
       <div class="room-meta">
         <span id="roomMode">自由竞技</span>
         <span id="roomCapacity">0 / 8 真人</span>
-        <span id="roomBots">6 个 AI</span>
+        <span id="roomBots">AI 自动补位</span>
       </div>
       <section class="room-settings" id="roomSettingsPanel" aria-labelledby="roomSettingsTitle">
         <div class="room-settings-heading">
@@ -151,17 +144,10 @@
               <option value="demon">魔王模式</option>
             </select>
           </label>
-          <label>
-            <span class="field-label">AI 数量</span>
-            <select id="roomBotCountSelect" class="select-input">
-              <option value="0">不添加</option>
-              <option value="2">2 个</option>
-              <option value="4">4 个</option>
-              <option value="6" selected>6 个</option>
-              <option value="8">8 个</option>
-              <option value="12">12 个</option>
-            </select>
-          </label>
+          <div class="auto-fill-info">
+            <span class="field-label">AI 自动补位</span>
+            <strong id="roomAutoFill">真人加入时自动替换 AI</strong>
+          </div>
         </div>
         <p class="mode-description room-mode-description" id="roomModeDescription" aria-live="polite">吞噬、成长并争夺质量排名，倒计时结束时质量最高者获胜。</p>
       </section>
@@ -215,7 +201,23 @@
     </div>
   </main>
 
+  <div class="session-menu" id="sessionMenu" hidden role="dialog" aria-modal="true" aria-labelledby="sessionMenuTitle">
+    <div class="session-menu-card">
+      <small>ESC MENU</small>
+      <h2 id="sessionMenuTitle">联机菜单</h2>
+      <p id="sessionMenuText">联机对局不会暂停服务器。</p>
+      <div class="session-menu-actions">
+        <button class="primary-button" id="sessionContinueBtn" type="button">继续</button>
+        <button class="secondary-button danger" id="sessionLeaveBtn" type="button">退出房间</button>
+        <button class="secondary-button" id="sessionHomeBtn" type="button">返回主菜单</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="./js/game-settings.js" defer></script>
+  <script src="./js/cosmetic-catalog.js" defer></script>
+  <script src="./js/gameplay-core.js" defer></script>
   <script src="./js/snapshot-wire.js" defer></script>
   <script src="./js/snapshot-buffer.js" defer></script>
   <script src="./js/local-predictor.js" defer></script>

@@ -351,7 +351,7 @@
     }
 
     resize(width, height, pixelRatio) {
-      this.pixelRatio = Math.max(0.75, pixelRatio || 1);
+      this.pixelRatio = Math.max(0.6, pixelRatio || 1);
       const targetWidth = Math.max(1, Math.floor(width * this.pixelRatio));
       const targetHeight = Math.max(1, Math.floor(height * this.pixelRatio));
       if (this.canvas.width !== targetWidth) this.canvas.width = targetWidth;
@@ -441,6 +441,7 @@
         active: this.active,
         backend: this.backend,
         device: this.device,
+        pixelRatio: this.pixelRatio,
         spriteBatching: this.supportsSprites,
         webgpuAvailable: Boolean(navigator.gpu)
       };

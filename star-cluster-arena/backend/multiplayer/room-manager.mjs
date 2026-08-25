@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 import {
-  MAX_BOTS,
   MAX_HUMAN_PLAYERS,
   PROTOCOL_VERSION,
   ProtocolError,
@@ -13,7 +12,7 @@ import {
   sanitizeName,
   secureToken
 } from "./protocol.mjs";
-import { normalizeBotCountForMode, normalizeMode } from "./modes.mjs";
+import { automaticBotCountForMode, getModeConfig, normalizeMode } from "./modes.mjs";
 import { AuthoritativeSimulation, SIMULATION_CONSTANTS } from "./simulation.mjs";
 import { compactSnapshot } from "./snapshot-wire.mjs";
 
@@ -61,6 +60,7 @@ export class RoomManager extends EventEmitter {
     const createdAt = this.now();
     const hostName = sanitizeName(options.name, "房主");
     const mode = normalizeMode(options.mode);
+    const modeConfig = getModeConfig(mode);
     const room = {
       code,
       name: sanitizeName(options.roomName, `${hostName}的星团`).slice(0, 28),
@@ -75,7 +75,9 @@ export class RoomManager extends EventEmitter {
       settings: {
         mode,
         maxPlayers: integerInRange(options.maxPlayers, 2, MAX_HUMAN_PLAYERS, MAX_HUMAN_PLAYERS),
-        botCount: normalizeBotCountForMode(mode, integerInRange(options.botCount, 0, MAX_BOTS, 6))
+        autoFillBots: true,
+        targetParticipants: modeConfig.targetParticipants,
+        botCount: automaticBotCountForMode(mode, 1)
       },
       simulation: null,
       interval: null,
@@ -119,7 +121,17 @@ export class RoomManager extends EventEmitter {
       .map(room => publicRoomSummary(room));
   }
 
+  syncAutomaticBotCount(room) {
+    const connectedHumans = [...room.players.values()].filter(player => player.connected).length;
+    const config = getModeConfig(room.settings.mode);
+    room.settings.autoFillBots = true;
+    room.settings.targetParticipants = config.targetParticipants;
+    room.settings.botCount = automaticBotCountForMode(room.settings.mode, connectedHumans);
+    return room.settings.botCount;
+  }
+
   publicLobby(room) {
+    this.syncAutomaticBotCount(room);
     return {
       code: room.code,
       name: room.name,
@@ -131,7 +143,8 @@ export class RoomManager extends EventEmitter {
         name: player.name,
         host: player.host,
         ready: player.ready,
-        connected: player.connected
+        connected: player.connected,
+        cosmetics: { ...player.cosmetics }
       }))
     };
   }
@@ -142,6 +155,7 @@ export class RoomManager extends EventEmitter {
   }
 
   broadcastLobby(room) {
+    this.syncAutomaticBotCount(room);
     room.updatedAt = this.now();
     this.broadcast(room, "lobby", { room: this.publicLobby(room) });
     this.emit("rooms-changed");
@@ -223,6 +237,7 @@ export class RoomManager extends EventEmitter {
       if (player.socket && player.socket !== connection.socket) socketClose(player.socket, 1000, "session-replaced");
       player.socket = connection.socket;
       player.connected = true;
+      player.cosmetics = message.cosmetics;
       player.disconnectedAt = 0;
       if (room.simulation) room.simulation.setConnected(player.id, true);
     } else {
@@ -233,6 +248,7 @@ export class RoomManager extends EventEmitter {
       player = {
         id: `player-${secureToken(8)}`,
         name: message.name,
+        cosmetics: message.cosmetics,
         host: isHost,
         ready: false,
         connected: true,
@@ -321,12 +337,11 @@ export class RoomManager extends EventEmitter {
     if (room.state !== ROOM_STATES.LOBBY) throw new ProtocolError("invalid-room-state", "对局开始后不能修改房间设置");
 
     const mode = Object.hasOwn(message, "mode") ? normalizeMode(message.mode) : room.settings.mode;
-    const requestedBots = Object.hasOwn(message, "botCount") ? message.botCount : room.settings.botCount;
-    const botCount = normalizeBotCountForMode(mode, requestedBots, room.settings.botCount);
-    if (mode === room.settings.mode && botCount === room.settings.botCount) return false;
+    if (mode === room.settings.mode) return false;
 
     room.settings.mode = mode;
-    room.settings.botCount = botCount;
+    room.settings.targetParticipants = getModeConfig(mode).targetParticipants;
+    this.syncAutomaticBotCount(room);
     room.revision += 1;
     for (const candidate of room.players.values()) candidate.ready = false;
     this.broadcastLobby(room);
@@ -345,8 +360,13 @@ export class RoomManager extends EventEmitter {
     room.matchId = `match-${secureToken(9)}`;
     room.baselineId = `baseline-${secureToken(7)}`;
     room.simulation = new AuthoritativeSimulation({
-      players: connected.map(candidate => ({ id: candidate.id, name: candidate.name, connected: true })),
-      botCount: room.settings.botCount,
+      players: connected.map(candidate => ({
+        id: candidate.id,
+        name: candidate.name,
+        connected: true,
+        cosmetics: candidate.cosmetics
+      })),
+      botCount: automaticBotCountForMode(room.settings.mode, connected.length),
       mode: room.settings.mode,
       seed: room.seed,
       now: this.now()
@@ -462,8 +482,10 @@ export class RoomManager extends EventEmitter {
     }
 
     let steps = 0;
-    while (loop.accumulator >= STEP_MS && steps < MAX_CATCH_UP_STEPS && !room.simulation.finished) {
+    const timingEpsilon = STEP_MS * 1e-9;
+    while (loop.accumulator + timingEpsilon >= STEP_MS && steps < MAX_CATCH_UP_STEPS && !room.simulation.finished) {
       loop.accumulator -= STEP_MS;
+      if (Math.abs(loop.accumulator) < timingEpsilon) loop.accumulator = 0;
       loop.simulationTime += STEP_MS;
       room.simulation.step(loop.simulationTime);
       this.broadcastSnapshot(room);

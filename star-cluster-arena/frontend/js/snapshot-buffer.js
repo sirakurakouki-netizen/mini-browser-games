@@ -88,6 +88,15 @@
     return result;
   }
 
+  function interpolateDiscreteEntityList(beforeValues, afterValues, alpha) {
+    if (alpha >= 1) return (Array.isArray(afterValues) ? afterValues : []).map(value => ({ ...value }));
+    const afterById = entityMap(afterValues);
+    return (Array.isArray(beforeValues) ? beforeValues : []).map(before => {
+      const after = afterById.get(before.id);
+      return after ? interpolateEntity(before, after, alpha) : { ...before };
+    });
+  }
+
   function interpolateGroups(beforeGroups, afterGroups, alpha) {
     const beforeById = entityMap(beforeGroups);
     const result = (Array.isArray(afterGroups) ? afterGroups : []).map(after => {
@@ -118,7 +127,9 @@
       // Foods are discrete authoritative objects. Use the earlier materialized
       // cache until the cursor reaches the delta that added/removed them.
       foods: alpha < 1 ? before.foods : after.foods,
-      viruses: alpha < 1 ? before.viruses : after.viruses
+      // Virus additions/removals are authoritative discrete events, while a
+      // launched virus that exists in both snapshots still interpolates.
+      viruses: interpolateDiscreteEntityList(before.viruses, after.viruses, alpha)
     };
   }
 

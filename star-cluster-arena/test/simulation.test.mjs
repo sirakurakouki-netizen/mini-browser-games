@@ -42,7 +42,7 @@ test("simulation preserves finite bounded entity state under load", () => {
     simulation.step(1_000_000 + (tick + 1) * 50);
   }
   const snapshot = simulation.snapshot();
-  assert.ok(snapshot.foods.length >= 480 && snapshot.foods.length <= 900);
+  assert.ok(snapshot.foods.length >= 2_100 && snapshot.foods.length <= 3_816);
   assert.ok(snapshot.ejected.length <= 360);
   for (const group of snapshot.groups) {
     assert.ok(group.cells.length <= SIMULATION_CONSTANTS.MAX_CELLS);

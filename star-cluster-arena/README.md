@@ -1,6 +1,6 @@
 # Star Cluster Arena（星团大作战）
 
-一个支持单机、局域网联机和 Windows 桌面封装的吞噬竞技游戏。原有 10 种单机玩法保持不变；局域网版同样开放全部 10 种玩法，支持 2–8 名真人、AI 补位、房间内改模式、准备、断线重连和服务端权威同步。
+一个支持单机、局域网联机和 Windows 桌面封装的吞噬竞技游戏。原有 10 种单机玩法保持不变；局域网版同样开放全部 10 种玩法，支持 2–8 名真人、按单机模式目标人数自动补 AI、房间内改模式、准备、断线重连和服务端权威同步。
 
 项目位于 [wangzifan396-wzf/mini-browser-games](https://github.com/wangzifan396-wzf/mini-browser-games) 仓库的 `star-cluster-arena/` 目录。
 
@@ -26,17 +26,41 @@ npm.cmd start
 - 如果大厅显示“防火墙阻止”，请点击“打开防火墙设置”，删除旧的阻止规则或允许当前版本使用专用网络。程序不会静默修改系统规则。
 - 路由器开启 AP/客户端隔离、双方不在同一子网或 Windows 网络被设为“公用”时，纯局域网发现仍可能被系统阻止。
 
-详细流程与验收标准见 [`docs/SDD-LAN-STABILITY-V3.1.md`](docs/SDD-LAN-STABILITY-V3.1.md) 和 [`docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md`](docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md)。
+详细流程与验收标准见 [`docs/SDD-LAN-STABILITY-V3.1.md`](docs/SDD-LAN-STABILITY-V3.1.md)、[`docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md`](docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md)、[`docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md`](docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md)、[`docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md`](docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md)、[`docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md`](docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md) 和 [`docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md`](docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md)。
 
-### v3.2 联机同步
+### v3.6 共享玩法内核与正式桌面发行
+
+- 十种单机与联机模式继续使用同一模式目录，全部按目标总人数自动补 AI。
+- 单机和服务端共同调用吐球命中刺球、累计质量、发射方向、发射速度和运动衰减规则；联机吐球现在可以喂刺并推动/发射刺球。
+- 移动中的刺球通过权威增量更新并在客户端插值，不需要等待下一次完整世界基线。
+- 主菜单新增个人中心，可直接管理外观、商店、锻造与成长；装备同时带入单人和联机。
+- 设置新增窗口化与无边框全屏、窗口尺寸；F11、首页按钮与设置读取同一桌面窗口状态。
+- 关于页新增 QQ、CSDN、小黑盒和哔哩哔哩，桌面版使用严格白名单在系统浏览器中打开并显示成功/失败反馈。
+- 联机大厅、等待房间和对局支持 Escape 返回；房主退出前会明确提示房间将关闭。
+- Windows 安装器改为 NSIS 引导式安装，可选择安装目录；仍同时提供便携版 ZIP。
+- 协议升级为 `sca-lan-v6`，避免旧服务端与缺少喂刺同步的客户端静默混房。
+
+完整范围、架构边界和发布门禁见 [`docs/SDD-CANONICAL-GAMEPLAY-DESKTOP-V3.6.md`](docs/SDD-CANONICAL-GAMEPLAY-DESKTOP-V3.6.md)。
+
+### v3.5 统一游戏入口与联机时钟
+
+- 新增正常桌面游戏结构：首页可进入单人、联机、设置、操作方式和关于；桌面版另有全屏与退出。
+- 单人和联机读取同一份帧率、画质、性能信息、屏幕震动和网络缓冲设置。图形帧率可选自动、60、90、120、144、165 或 240 FPS。
+- 首页只暂停展示背景，不推进对局模拟；Escape 可逐级返回。
 
 - 房主可在创建房间或等待房间中选择自由、团队、生存、大逃杀、闪电、孢子、霸屏、据点、巨行星和魔王模式。
-- 服务端以 20 Hz 权威模拟并发送紧凑动态快照；客户端使用服务器时间轴、历史帧、自适应 80～180 ms 抖动缓冲及本地移动预测。
+- 每种模式直接使用单机目录中的目标人数：例如大逃杀始终为 100 个参赛者，4 名真人时自动分配 96 个 AI；团队战恢复 10 队 × 4 人，据点战恢复 4 队 × 7 人。
+- 单机、权威服务器和本机预测共用移动、半径、分裂阈值、冲量、合球冷却、AI 出生质量、普通刺分片、孢子爆裂与吐球拾取公式；每个分身分别按自身大小和鼠标世界目标计算速度。
+- 普通刺只触发细胞分裂，只有孢子刺会炸出可争夺质量；所有模式恢复单机刺球默认值和 2100 食点基线。
+- 单机已装备的皮肤、孢子、光环和拖尾随入房消息同步，并在等待房间及联机画面中显示。
+- 服务端以 30 Hz 权威模拟并发送紧凑动态快照，客户端以 60 Hz 上报输入；客户端使用服务器时间轴、历史帧、可配置抖动缓冲及本地移动预测。
+- 联机 HUD 分别显示图形 FPS 与权威 Hz，避免把显卡绘制频率误认为服务器更新频率。
+- 输入 ACK 后只重放未确认输入；v3.6 身份与世界目标协议为 `sca-lan-v6`，不会与旧客户端静默混房。
 - 食物和刺球使用完整基线加 revision 增量；发现修订链断裂会自动请求新基线。
 - 慢客户端不会让旧快照无限排队；恢复后会收到完整基线。
-- 联机画布限制内部像素预算，食物按颜色批量绘制，HUD 降频更新，避免高分辨率屏幕产生额外主线程停顿。
+- 单机 WebGL 食点/背景与透明 2D 前景使用真正的双画布分层，不再逐帧把 GPU 图像复制回 CPU 画布；桌面版请求高性能 GPU 并传入实际显示器刷新率。
 
-发布候选已通过 92 项自动化测试。每种模式均完成真实 HTTP/WebSocket 双客户端开局；压力脚本分别以 8 和 16 个参与者运行每模式 1200 tick。8 参与者档动态快照 p95 为 2.8～6.3 KiB，单客户端动态数据约 45～96 KiB/s；16 参与者压力档 p95 为 7.3～14.9 KiB。详细口径和仍需完成的双机人工验收见 v3.2 SDD。
+十模式的目标人数、队伍结构和关键交互规则已经迁入共享契约；单人使用 60 Hz 本地权威，联机使用 30 Hz 服务端权威，这是同一规则上的两种会话适配器，不是把两套物理同时运行。网络编码、插值和预测仍是联机必要的专属实现。完整状态以 v3.5 SDD 与构建记录为准。
 
 ## Windows 桌面版
 
@@ -49,10 +73,11 @@ npm.cmd run desktop
 npm.cmd run make:desktop
 ```
 
-最终成品固定输出到仓库顶层的 `star-cluster-arena-desktop/`，其中：
+最终成品固定输出到仓库顶层的 `star-cluster-arena-desktop/v3.6.0/`，其中：
 
-- `星团大作战-安装程序.exe`：双击安装，安装后从桌面或开始菜单启动游戏。
-- `星团大作战-便携版-3.2.0-win-x64.zip`：解压后双击目录内的 `StarClusterArena.exe`，不能只把 EXE 单独拷走。
+- `星团大作战-安装程序-3.6.0-win-x64.exe`：引导式安装，可选择安装位置，安装后从桌面或开始菜单启动游戏。
+- `星团大作战-便携版-3.6.0-win-x64.zip`：解压后双击目录内的 `StarClusterArena.exe`，不能只把 EXE 单独拷走。
+- `SHA256SUMS.txt`：安装版和便携版的 SHA-256 校验值。
 
 源码检查与测试：
 
@@ -60,6 +85,8 @@ npm.cmd run make:desktop
 npm.cmd run check
 npm.cmd test
 npm.cmd run test:soak
+npm.cmd run test:desktop-perf
+npm.cmd run test:desktop-multiplayer-perf
 ```
 
 ## 目录
@@ -70,6 +97,10 @@ backend/multiplayer/               房间、协议、权威模拟、局域网发
 frontend/index.html                单机游戏首页
 frontend/multiplayer.html          联机大厅和联机对局界面
 frontend/js/game.js                原有单机游戏逻辑
+frontend/js/game-settings.js       单人和联机共用的帧率、画质与缓冲设置
+frontend/js/game-mode-catalog.js   单机与联机共用的十模式基础定义
+frontend/js/gameplay-core.js       单机、服务端与预测器共用的移动/分裂规则
+frontend/js/cosmetic-catalog.js    单机与联机共用的皮肤、孢子、光环和拖尾目录
 frontend/js/multiplayer.js         联机客户端、房间交互和输入同步
 frontend/js/snapshot-*.js          紧凑快照解码、历史缓冲和自适应插值
 frontend/js/local-predictor.js     本地移动预测和未确认输入重放
@@ -89,19 +120,22 @@ test/                              单元与双客户端集成测试
 
 本机验证中，普通 Edge 进程选择了 AMD 核显，而 `start.cmd` 创建的专用进程成功识别为 `NVIDIA GeForce RTX 5070 Ti / Direct3D 11`。页面左上角会直接显示实际使用的 RTX 型号。
 
-## 2.1 性能模式
+## v3.3.1 性能模式
 
 - 游戏逻辑固定为 60Hz，显示帧使用位置插值，不再随 160Hz 屏幕重复运行 160 次 AI 与碰撞。
 - 食物改由 WebGL 点精灵批量提交，降低 Canvas 2D 绘制调用。
 - 4K 前景画布限制为约 320 万内部像素，DOM 界面仍保持原生清晰度。
-- GPU 背景使用独立低倍率渲染，减少双画布合成带宽。
-- 启动器自动检测显示器刷新率；高刷屏以 120 FPS 帧预算调整画质。
+- GPU 背景/食点使用独立低倍率不透明画布，2D 细胞使用透明前景画布，取消 GPU → CPU 逐帧复制。
+- 启动器自动检测显示器刷新率；v3.5 自动档最高匹配到 240 FPS，也可在统一设置中手动限制，物理仍为固定 60 Hz。
+- 独显背景/食点层使用 0.9x，集成显卡使用 0.75x；细胞、文字和 HUD 前景继续按独立像素预算保持清晰。
 - 高像素压力下关闭面板实时背景模糊，并按窗口像素预算选择稳定的初始渲染倍率。
 
-## 2.2 稳帧模式
+本机 1440×900、160 Hz 自动对局采样中，RTX 5070 Ti 稳态平均 119 FPS、AMD Radeon 集成显卡稳态平均 120 FPS，两条路径最低采样均为 118 FPS且没有超过 80 ms 的长帧。具体机器可通过 `npm.cmd run test:desktop-perf` 复验；数值不是对其他硬件的统一保证。
 
-- 游戏过程中不再反复改变 4K 画布尺寸，避免纹理重建导致的闪白与长停顿。
-- WebGL 背景先写入隐藏缓存，最终只提交一个不透明可见画布，降低核显的透明双层合成压力。
+## 稳帧策略
+
+- 渲染倍率只在持续压力或长期恢复后按迟滞调整，避免频繁纹理重建导致闪白与长停顿。
+- WebGL 背景保持不透明，Canvas 2D 只清除并绘制前景实体，避免每帧跨画布搬运整张背景。
 - 插值过程不再逐帧创建临时数组，减少垃圾回收停顿。
 - 碰撞空间、可见球体、吐出物候选列表改为循环复用。
 - 空间网格改用数值键，并缓存球体包装对象，降低主线程分配频率。

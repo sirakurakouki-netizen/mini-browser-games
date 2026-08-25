@@ -1,10 +1,16 @@
 (function () {
   "use strict";
 
+  const gameplayCore = window.ScaGameplayCore;
+  if (!gameplayCore) throw new Error("共享玩法内核未加载");
+  const settingsApi = window.ScaGameSettings;
+  if (!settingsApi) throw new Error("共享游戏设置未加载");
+  const gameSettings = settingsApi.load();
+
   const gpuCanvas = document.getElementById("gpuCanvas");
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d", {
-    alpha: false,
+    alpha: true,
     desynchronized: true,
     willReadFrequently: false
   });
@@ -13,13 +19,12 @@
   const gpuRenderer = window.GPUArenaRenderer && gpuCanvas
     ? new window.GPUArenaRenderer(gpuCanvas)
     : null;
-  const backgroundCacheCanvas = typeof OffscreenCanvas === "function"
-    ? new OffscreenCanvas(1, 1)
-    : document.createElement("canvas");
-  const backgroundCacheCtx = backgroundCacheCanvas.getContext("2d", { alpha: false, desynchronized: true });
   const renderBadge = document.getElementById("renderBadge");
   const eventBanner = document.getElementById("eventBanner");
   const lobbyToast = document.getElementById("lobbyToast");
+  const titleScreen = document.getElementById("titleScreen");
+  const titleRuntimeStatus = document.getElementById("titleRuntimeStatus");
+  const settingsForm = document.getElementById("gameSettingsForm");
 
   const massValue = document.getElementById("massValue");
   const rankValue = document.getElementById("rankValue");
@@ -52,6 +57,7 @@
   const shopPanel = document.getElementById("shopPanel");
   const forgePanel = document.getElementById("forgePanel");
   const progressPanel = document.getElementById("progressPanel");
+  const lobbyBackBtn = document.getElementById("lobbyBackBtn");
   const modeButtons = [...document.querySelectorAll("[data-mode]")];
 
   const WORLD = 7600;
@@ -65,8 +71,8 @@
   const VIRUS_MASS = 95;
   const BIG_VIRUS_MASS = 260;
   const MIN_CELL_MASS = 9;
-  const SPLIT_MIN_MASS = 32;
-  const EJECT_MIN_MASS = 30;
+  const SPLIT_MIN_MASS = gameplayCore.MOVEMENT.splitMinimumMass;
+  const EJECT_MIN_MASS = gameplayCore.MOVEMENT.ejectMinimumMass;
   const EJECT_INTERVAL = 68;
   const MAX_EJECTED = 720;
   const MAX_PARTICLES = 560;
@@ -75,11 +81,13 @@
   const MINIMAP_SLOW_INTERVAL = 280;
   const SIMULATION_STEP = 1 / 60;
   const MAX_SIMULATION_STEPS = 3;
-  const REQUESTED_REFRESH_RATE = clamp(Number(new URLSearchParams(location.search).get("refresh")) || 60, 60, 240);
-  const TARGET_RENDER_FPS = Math.min(120, REQUESTED_REFRESH_RATE);
+  const REQUESTED_REFRESH_RATE = settingsApi.displayRefresh();
+  const TARGET_RENDER_FPS = gameplayCore.renderBudgetFor(settingsApi.targetFps(gameSettings, REQUESTED_REFRESH_RATE));
   const TARGET_FRAME_MS = 1000 / TARGET_RENDER_FPS;
+  const TARGET_RENDER_INTERVAL = 1000 / TARGET_RENDER_FPS;
   const GPU_CACHE_FPS = Math.min(80, TARGET_RENDER_FPS);
-  const MAX_FOREGROUND_PIXELS = 3200000;
+  const QUALITY_PRESET = settingsApi.qualityPreset(gameSettings);
+  const MAX_FOREGROUND_PIXELS = QUALITY_PRESET.pixelBudget;
   const PLAYER_NAME = "你";
   const COLORS = ["#44d7b6", "#67e8f9", "#ffd166", "#ff7a90", "#a78bfa", "#f59e0b", "#7dd3fc", "#f472b6", "#34d399"];
   const TEAM_COLORS = ["#44d7b6", "#ff7a90", "#7dd3fc", "#ffd166", "#a78bfa", "#f59e0b", "#f472b6", "#34d399", "#e5e7eb", "#94a3b8"];
@@ -216,282 +224,16 @@
     { key: "spore-trail", name: "孢子流萤", color: "#be185d", accent: "#fdf2f8", type: "special", pattern: "bubbles", tier: "epic", rarity: "史诗" }
   );
 
-  const GAME_MODES = {
-    solo: {
-      label: "自由模式",
-      short: "自由",
-      description: "12 分钟限时，反复复活，按个人质量结算排名。",
-      players: 100,
-      teams: 0,
-      safeZone: false,
-      duration: 720,
-      respawn: true,
-      ranking: "mass",
-      playerStartMass: 160,
-      foodTargetScale: 1.06,
-      foodRateScale: 1.08,
-      foodMassScale: 1.06
-    },
-    team: {
-      label: "团队战",
-      short: "团队",
-      description: "10 队 4 人，队友可接分身，按队伍总质量结算。",
-      players: 40,
-      teams: 10,
-      teamSize: 4,
-      safeZone: false,
-      duration: 720,
-      respawn: true,
-      ranking: "teamMass",
-      playerStartMass: 170,
-      foodTargetScale: 1.14,
-      foodRateScale: 1.13,
-      foodMassScale: 1.08,
-      aiAggroScale: 0.94
-    },
-    survival: {
-      label: "生存模式",
-      short: "生存",
-      description: "64 人生命制，吞噬加命，生命耗尽出局。",
-      players: 64,
-      teams: 0,
-      safeZone: false,
-      duration: 540,
-      respawn: true,
-      lives: 3,
-      ranking: "kills",
-      playerStartMass: 180,
-      foodTargetScale: 1.14,
-      foodRateScale: 1.15,
-      foodMassScale: 1.12,
-      sporeVirus: true,
-      sporeVirusChance: 0.08
-    },
-    battle: {
-      label: "大逃杀",
-      short: "逃杀",
-      description: "100 人开局，安全区持续收缩，圈外掉质量，活到最后。",
-      players: 100,
-      teams: 0,
-      safeZone: true,
-      duration: 0,
-      respawn: false,
-      ranking: "mass",
-      playerStartMass: 220,
-      foodTargetScale: 1.08,
-      foodRateScale: 1.12,
-      foodMassScale: 1.12
-    },
-    blitz: {
-      label: "闪电乱斗",
-      short: "闪电",
-      description: "3 分钟高密度发育，随机事件密集触发，适合快速爽局。",
-      players: 88,
-      teams: 0,
-      safeZone: true,
-      duration: 185,
-      respawn: true,
-      ranking: "mass",
-      playerStartMass: 320,
-      foodTargetScale: 1.42,
-      foodRateScale: 1.68,
-      speedScale: 1.16,
-      safeZoneRadius: 0.44,
-      safeZoneTargetRadius: 0.28,
-      safeZoneShrinkStart: 6500,
-      safeZoneShrinkEnd: 30000,
-      eventDelay: 4200,
-      eventIntervalMin: 8500,
-      eventIntervalMax: 13500,
-      virusCount: 54,
-      sporeVirus: true,
-      sporeVirusChance: 0.16,
-      blitzSupremacy: true,
-      supremacyGrace: 45,
-      supremacyShare: 0.68,
-      supremacyLead: 4.2,
-      supremacyHold: 3
-    },
-    spore: {
-      label: "孢子风暴",
-      short: "孢子",
-      description: "48 人孢子刺战场，所有刺都会炸出一圈可争夺孢子。",
-      players: 48,
-      teams: 0,
-      safeZone: false,
-      duration: 360,
-      respawn: true,
-      ranking: "mass",
-      playerStartMass: 260,
-      foodTargetScale: 1.24,
-      foodRateScale: 1.36,
-      foodMassScale: 1.25,
-      speedScale: 1.06,
-      mergeScale: 0.68,
-      aiAggroScale: 0.9,
-      virusCount: 62,
-      virusMax: 92,
-      virusRegenRate: 0.9,
-      sporeVirus: true,
-      sporeVirusOnly: true,
-      sporeVirusChance: 1,
-      sporeVirusLossMin: 0.5,
-      sporeVirusLossMax: 0.5,
-      sporeVirusBurstMin: 18,
-      sporeVirusBurstMax: 30,
-      sporeVirusPieceMass: 18,
-      eventDelay: 5200,
-      eventIntervalMin: 10500,
-      eventIntervalMax: 16500
-    },
-    screen: {
-      label: "霸屏模式",
-      short: "霸屏",
-      description: "22 人方形战场，64 分身上限，用 A 快合、D 冲刺种刺完成区域霸屏。",
-      players: 22,
-      teams: 0,
-      safeZone: false,
-      rectArena: true,
-      arenaWidth: 0.72,
-      arenaHeight: 0.72,
-      duration: 420,
-      respawn: true,
-      ranking: "mass",
-      playerStartMass: 980,
-      botMassScale: 1.48,
-      foodTargetScale: 1.3,
-      foodRateScale: 1.38,
-      foodMassScale: 1.42,
-      speedScale: 1,
-      mergeScale: 0.52,
-      minZoom: 0.32,
-      splitMinZoom: 0.16,
-      aiAggroScale: 0.76,
-      ejectCellLimit: 10,
-      maxCells: 64,
-      botMaxCells: 24,
-      quickMerge: true,
-      quickMergeCooldown: 6200,
-      screenSkill: true,
-      screenSkillCooldown: 7600,
-      screenSkillDuration: 1.25,
-      screenSkillImpulse: 520,
-      screenSkillCost: 0.012,
-      screenSkillVirus: true,
-      screenSkillVirusCost: 42,
-      virusCount: 20,
-      virusMax: 34,
-      virusRegenRate: 0.24,
-      virusPlayerPieces: 6,
-      bigVirusPlayerPieces: 8,
-      sporeVirus: true,
-      sporeVirusChance: 0.1,
-      domination: true,
-      dominationMetric: "arena",
-      dominationShare: 0.88,
-      dominationHold: 6,
-      dominationHysteresis: 0.045,
-      dominationCandidates: 12,
-      coverageSamples: 26,
-      coverageRadiusMult: 1.08,
-      coverageRadiusBonus: 14,
-      coverageAreaWeight: 0.82,
-      coverageBoostLimit: 0.12,
-      respawnShield: 3.2,
-      eventDelay: 11500,
-      eventIntervalMin: 16500,
-      eventIntervalMax: 25500,
-      lateFoodRamp: 0.24,
-      comebackRespawn: true,
-      comebackMassScale: 0.15,
-      comebackMaxScale: 2.0
-    },
-    control: {
-      label: "据点战",
-      short: "据点",
-      description: "4 队 7 人争夺 3 个星核据点，站入据点压制进度，先到目标分获胜。",
-      players: 28,
-      teams: 4,
-      teamSize: 7,
-      safeZone: false,
-      duration: 600,
-      respawn: true,
-      ranking: "control",
-      control: true,
-      controlScore: 240,
-      playerStartMass: 185,
-      foodTargetScale: 1.16,
-      foodRateScale: 1.17,
-      foodMassScale: 1.1
-    },
-    giant: {
-      label: "巨行星霸屏",
-      short: "巨行星",
-      description: "全员巨球开局，低密度固定圆形战场，连续保持霸屏进度即可获胜。",
-      players: 36,
-      teams: 0,
-      safeZone: true,
-      duration: 0,
-      respawn: true,
-      ranking: "mass",
-      playerStartMass: 4300,
-      botMassScale: 5.35,
-      foodTargetScale: 1,
-      foodRateScale: 1.07,
-      foodMassScale: 1.08,
-      speedScale: 0.88,
-      mergeScale: 0.48,
-      minZoom: 0.28,
-      splitMinZoom: 0.14,
-      aiAggroScale: 0.86,
-      virusCount: 44,
-      virusMax: 58,
-      virusRegenRate: 0.44,
-      virusPlayerPieces: 6,
-      bigVirusPlayerPieces: 8,
-      sporeVirus: true,
-      sporeVirusChance: 0.08,
-      domination: true,
-      dominationMetric: "arena",
-      dominationShare: 0.88,
-      dominationHold: 6,
-      dominationHysteresis: 0.045,
-      dominationCandidates: 12,
-      coverageSamples: 28,
-      coverageRadiusMult: 1.1,
-      coverageRadiusBonus: 18,
-      coverageAreaWeight: 0.84,
-      coverageBoostLimit: 0.12,
-      staticZone: true,
-      safeZoneRadius: 0.38,
-      safeZoneTargetRadius: 0.38,
-      respawnShield: 3.2,
-      eventDelay: 12000,
-      eventIntervalMin: 30000,
-      eventIntervalMax: 44000
-    },
-    demon: {
-      label: "魔王模式",
-      short: "魔王",
-      description: "勇者阵营合作发育，击败超大魔王和魔兵，限时吞掉魔王获胜。",
-      players: 10,
-      teams: 2,
-      teamSize: 4,
-      safeZone: false,
-      duration: 540,
-      respawn: true,
-      ranking: "demon",
-      demon: true,
-      playerStartMass: 340,
-      foodTargetScale: 1.28,
-      foodRateScale: 1.38,
-      foodMassScale: 2.15,
-      mergeScale: 0.82,
-      eventDelay: 7000,
-      eventIntervalMin: 18000,
-      eventIntervalMax: 28000
-    }
-  };
+  const sharedCosmetics = globalThis.ScaCosmeticCatalog;
+  if (!sharedCosmetics) throw new Error("Shared cosmetic catalog failed to load");
+  SKINS.splice(0, SKINS.length, ...sharedCosmetics.SKINS);
+  SPORES.splice(0, SPORES.length, ...sharedCosmetics.SPORES);
+  HALOS.splice(0, HALOS.length, ...sharedCosmetics.HALOS);
+  TRAILS.splice(0, TRAILS.length, ...sharedCosmetics.TRAILS);
+
+  const modeCatalog = globalThis.ScaModeCatalog;
+  if (!modeCatalog) throw new Error("Shared mode catalog failed to load");
+  const GAME_MODES = modeCatalog.MODES;
 
   const MATCH_EVENTS = [
     { key: "spore", label: "孢子暴雨", desc: "食点刷新变快", duration: 30, foodTargetMult: 1.12, foodRateMult: 1.55, foodMassMult: 1.12, color: "#ffd166" },
@@ -647,6 +389,11 @@
     maxFrame: 0,
     longFrames: 0,
     pixelRatioCap: renderRatioCeiling(),
+    qualityPressure: 0,
+    qualityRecovery: 0,
+    scaleChanges: 0,
+    renderedFrames: 0,
+    skippedRenderFrames: 0,
     lastRankHtml: "",
     lastTagHtml: ""
   };
@@ -670,6 +417,8 @@
   if (!meta.unlockedHalos.includes(selectedHalo)) selectedHalo = "none";
   if (!meta.unlockedTrails.includes(selectedTrail)) selectedTrail = "none";
   let lastFrame = performance.now();
+  let lastRenderedAt = 0;
+  let nextRenderAt = 0;
   let lastPlayerEject = 0;
   let hudTimer = 0;
   let runId = 0;
@@ -688,15 +437,15 @@
   let frameCameraX = camera.x;
   let frameCameraY = camera.y;
   let frameZoom = zoom;
-  let backgroundCacheReady = false;
-  let backgroundCacheHasFood = false;
+  let gpuLayerReady = false;
+  let gpuLayerHasFood = false;
   let lastGpuFrame = -Infinity;
 
   function renderRatioCeiling() {
     const deviceRatio = window.devicePixelRatio || 1;
     const cssPixels = Math.max(1, window.innerWidth * window.innerHeight);
     const pixelBudgetRatio = Math.sqrt(MAX_FOREGROUND_PIXELS / cssPixels);
-    return clamp(pixelBudgetRatio, 0.7, Math.min(1.25, deviceRatio));
+    return clamp(pixelBudgetRatio, 0.65, Math.min(QUALITY_PRESET.maximumDpr, deviceRatio));
   }
 
   function resize() {
@@ -712,11 +461,13 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "medium";
-    if (gpuRenderer) gpuRenderer.resize(view.w, view.h, Math.min(0.9, dpr));
+    const qualityDrop = Math.max(0, ratioCeiling - perf.pixelRatioCap);
+    const gpuRatioCeiling = gameplayCore.gpuPixelRatioCeiling(gpuRenderer?.info().device);
+    const gpuRatio = clamp(Math.min(gpuRatioCeiling, dpr) - qualityDrop * 1.5, 0.6, gpuRatioCeiling);
+    if (gpuRenderer) gpuRenderer.resize(view.w, view.h, gpuRatio);
     if (gpuRenderer) {
-      backgroundCacheCanvas.width = gpuCanvas.width;
-      backgroundCacheCanvas.height = gpuCanvas.height;
-      backgroundCacheReady = false;
+      gpuLayerReady = false;
+      gpuLayerHasFood = false;
       lastGpuFrame = -Infinity;
     }
     document.documentElement.classList.toggle("performance-mode", view.w * view.h * dpr * dpr > 2200000);
@@ -743,7 +494,7 @@
   }
 
   function radiusFromMass(mass) {
-    return Math.max(4, Math.sqrt(Math.max(1, mass)) * 4);
+    return gameplayCore.radiusFromMass(mass);
   }
 
   function distSq(a, b) {
@@ -861,6 +612,25 @@
     lobbyToast.style.boxShadow = `0 18px 60px rgba(0, 0, 0, 0.42), 0 0 28px ${color}`;
     lobbyToast.classList.add("show");
     lobbyToastTimer = setTimeout(() => lobbyToast.classList.remove("show"), 2400);
+  }
+
+  async function copyText(value) {
+    if (window.starClusterDesktop?.copyText) return window.starClusterDesktop.copyText(value);
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.append(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      return copied;
+    }
   }
 
   function updateMusicButtons() {
@@ -1889,14 +1659,12 @@
   }
 
   function mergeCooldown(mass, type) {
-    const scale = type === "virus-big" ? 0.42 : type === "virus" ? 0.36 : 0.3;
     const eventMult = activeEventFactor("mergeMult", 1);
     const modeMult = modeConfig().mergeScale || 1;
-    const minBase = type === "split" ? 4.2 : 6.5;
-    const maxBase = type === "virus-big" ? 18 : type === "virus" ? 15 : 12;
-    const min = minBase * eventMult * modeMult;
-    const max = Math.max(min + 0.8, maxBase * eventMult * modeMult);
-    return clamp((22 + mass * 0.012) * scale * eventMult * modeMult, min, max);
+    return gameplayCore.mergeCooldownSeconds(mass, type, {
+      eventMultiplier: eventMult,
+      modeMultiplier: modeMult
+    });
   }
 
   function formatTime(seconds) {
@@ -1916,12 +1684,8 @@
   }
 
   function botStartMass(index, config) {
-    let mass;
-    if (config.ranking === "kills") mass = index < 6 ? rand(230, 430) : rand(82, 240);
-    else if (config.teams > 0) mass = index < 10 ? rand(220, 460) : rand(86, 270);
-    else if (config.respawn) mass = index < 10 ? rand(260, 540) : index < 42 ? rand(120, 360) : rand(58, 230);
-    else mass = index < 8 ? rand(320, 680) : index < 34 ? rand(135, 430) : rand(72, 250);
-    return mass * (config.botMassScale || 1);
+    const range = gameplayCore.botStartMassRange(index, config);
+    return rand(range.minimum, range.maximum);
   }
 
   function rollDemonBossCount() {
@@ -2246,12 +2010,21 @@
     lastCellSpace = null;
     renderCells = [];
     perf.avgFrame = 16;
+    perf.avgWork = 8;
     perf.lowQuality = false;
     perf.nextMiniDraw = 0;
+    perf.nextQualityCheck = now + 5000;
+    perf.qualityPressure = 0;
+    perf.qualityRecovery = 0;
+    perf.scaleChanges = 0;
     perf.drawnFood = 0;
     perf.drawnCells = 0;
     perf.maxFrame = 0;
     perf.longFrames = 0;
+    perf.renderedFrames = 0;
+    perf.skippedRenderFrames = 0;
+    lastRenderedAt = 0;
+    nextRenderAt = 0;
     input.ejectHeld = false;
     lastPlayerEject = 0;
     controlPoints = [];
@@ -2333,8 +2106,11 @@
 
     if (opts.menu) {
       game.paused = true;
-      showStartOverlay();
+      if (opts.title) showTitleScreen();
+      else showStartOverlay();
     } else {
+      document.documentElement.classList.remove("title-active");
+      document.querySelector(".hud")?.removeAttribute("aria-hidden");
       overlay.style.display = "none";
       modeGrid.style.display = "none";
       finalMass.style.display = "block";
@@ -3684,23 +3460,13 @@
       if (group.dead) continue;
       const target = group.isPlayer ? playerTarget : group.ai.target;
       for (const cell of group.cells) {
-        const dx = target.x - cell.x;
-        const dy = target.y - cell.y;
-        const move = norm(dx, dy);
-        const distanceScale = clamp(move.length / 210, 0.08, 1);
         const demonMoveBoost = group.isBoss ? 1.28 : group.isDemonMinion ? 1.12 : 1;
         const modeSpeed = modeConfig().speedScale || 1;
         const skillBoost = group.isPlayer && game.screenSkillUntil > now ? 1.18 : 1;
-        const baseSpeed = (352 / (1 + cell.radius / 96)) * activeEventFactor("speedMult", 1) * modeSpeed * demonMoveBoost * skillBoost;
-        const desiredX = move.x * baseSpeed * distanceScale;
-        const desiredY = move.y * baseSpeed * distanceScale;
-        const steer = damp(group.isPlayer ? 4.35 : 3.35, dt);
-        cell.vx += (desiredX - cell.vx) * steer;
-        cell.vy += (desiredY - cell.vy) * steer;
-        cell.vx *= Math.pow(0.965, dt * 60);
-        cell.vy *= Math.pow(0.965, dt * 60);
-        cell.x += cell.vx * dt;
-        cell.y += cell.vy * dt;
+        gameplayCore.applyMovement(cell, target, dt, {
+          speedScale: activeEventFactor("speedMult", 1) * modeSpeed * demonMoveBoost * skillBoost,
+          steerRate: group.isPlayer ? gameplayCore.MOVEMENT.playerSteerRate : gameplayCore.MOVEMENT.aiSteerRate
+        });
         cell.mergeDelay = Math.max(0, cell.mergeDelay - dt);
         if (cell.mergeDelay <= 0) cell.mergeMax = 0;
         if (!group.isBoss) {
@@ -3725,15 +3491,19 @@
 
       for (let v = viruses.length - 1; v >= 0; v--) {
         const virus = viruses[v];
-        if (distSq(mass, virus) < (virus.radius + mass.radius * 0.6) ** 2) {
+        if (gameplayCore.ejectedHitsVirus(mass, virus)) {
           const color = virusColor(virus);
           const baseMass = virusBaseMass(virus);
+          const feed = gameplayCore.virusFeedPlan({
+            kind: virus.kind,
+            currentMass: virus.mass,
+            baseMass,
+            ejectedMass: mass.mass
+          });
           sparkle(mass.x, mass.y, color, 6, 130);
-          viruses[v].mass += mass.mass * (virus.kind === "big" ? 0.54 : 0.7);
+          viruses[v].mass = feed.nextMass;
           ejected.splice(i, 1);
-          if (viruses[v].mass > baseMass + (virus.kind === "big" ? 170 : 95)) {
-            launchVirus(v, mass);
-          }
+          if (feed.shouldLaunch) launchVirus(v, mass);
           break;
         }
       }
@@ -3745,22 +3515,24 @@
 
   function launchVirus(index, seed) {
     const virus = viruses[index];
-    const push = norm(virus.x - seed.x, virus.y - seed.y);
     const big = virus.kind === "big";
     const baseMass = virusBaseMass(virus);
-    const extra = {
-      x: clamp(virus.x + push.x * 80, 120, WORLD - 120),
-      y: clamp(virus.y + push.y * 80, 120, WORLD - 120),
-      vx: push.x * (big ? 330 : 420),
-      vy: push.y * (big ? 330 : 420),
-      radius: big ? rand(62, 76) : virus.radius * 0.88,
-      mass: baseMass,
+    const launch = gameplayCore.virusLaunchPlan({
+      virus,
+      seed,
       baseMass,
+      bigRadius: big ? rand(62, 76) : undefined,
+      minimumX: 120,
+      maximumX: WORLD - 120,
+      minimumY: 120,
+      maximumY: WORLD - 120
+    });
+    const extra = {
+      ...launch,
       spin: rand(0, Math.PI * 2),
-      kind: virus.kind || "small",
-      launched: true,
       age: 0
     };
+    delete extra.ageSeconds;
     virus.mass = baseMass;
     virus.baseMass = baseMass;
     if (viruses.length < virusLimit()) viruses.push(extra);
@@ -3828,10 +3600,14 @@
         if (groupInvincible(wrap.group)) continue;
         const sameOwner = mass.ownerId === wrap.group.id;
         const playerOwned = mass.ownerId === playerGroup?.id;
-        if (sameOwner && mass.age < (playerOwned ? 0.32 : 0.48)) continue;
-        if (playerOwned && !sameOwner && mass.age < 0.42) continue;
-        if (!sameOwner && mass.age < 0.16) continue;
-        if (distSq(wrap.cell, mass) < (wrap.cell.radius + mass.radius * 0.42) ** 2) {
+        if (gameplayCore.canCollectEjected({
+          sameOwner,
+          playerOwned,
+          ageSeconds: mass.age,
+          cellRadius: wrap.cell.radius,
+          itemRadius: mass.radius,
+          distanceSquared: distSq(wrap.cell, mass)
+        })) {
           if (wrap.cell.radius <= largestEaterRadius) continue;
           largestEaterRadius = wrap.cell.radius;
           eater = wrap;
@@ -3897,13 +3673,14 @@
     for (let v = viruses.length - 1; v >= 0; v--) {
       const virus = viruses[v];
       if (virus.launched) {
-        virus.age += dt;
-        virus.x += (virus.vx || 0) * dt;
-        virus.y += (virus.vy || 0) * dt;
-        virus.vx *= Math.pow(0.985, dt * 60);
-        virus.vy *= Math.pow(0.985, dt * 60);
+        const motion = gameplayCore.advanceLaunchedVirus({ ...virus, ageSeconds: virus.age }, dt);
+        virus.age = motion.ageSeconds;
+        virus.x = motion.x;
+        virus.y = motion.y;
+        virus.vx = motion.vx;
+        virus.vy = motion.vy;
+        virus.launched = motion.launched;
         keepInside(virus);
-        if (virus.age > 9) virus.launched = false;
       }
 
       const scanRange = virus.radius + (currentSpace.maxRadius || 360) + 110;
@@ -3927,20 +3704,21 @@
   function burstCellBySporeVirus(group, cell, virus, now) {
     const color = virusColor(virus);
     const config = modeConfig();
-    const massPressure = clamp((cell.mass - 800) / 9000, 0, 1);
     const lossMin = config.sporeVirusLossMin !== undefined ? config.sporeVirusLossMin : 0.5;
     const lossMax = config.sporeVirusLossMax !== undefined ? config.sporeVirusLossMax : 0.5;
-    const lossRatio = lerp(lossMin, lossMax, massPressure);
-    const loss = clamp(cell.mass * lossRatio, 54, Math.max(54, cell.mass - MIN_CELL_MASS * 4));
-    if (loss <= 0 || cell.mass - loss < MIN_CELL_MASS * 2) {
+    const plan = gameplayCore.sporeBurstPlan({
+      cellMass: cell.mass,
+      lossMinimum: lossMin,
+      lossMaximum: lossMax,
+      minimumPieces: config.sporeVirusBurstMin || 16,
+      maximumPieces: config.sporeVirusBurstMax || 30,
+      pieceMass: config.sporeVirusPieceMass || 17
+    });
+    const { lossRatio, loss, pieces, pieceMass } = plan;
+    if (!plan.canBurst) {
       cell.mass += virusBaseMass(virus) * 0.42;
       return;
     }
-    const minPieces = config.sporeVirusBurstMin || 16;
-    const maxPieces = config.sporeVirusBurstMax || 30;
-    const pieceMassBase = config.sporeVirusPieceMass || 17;
-    const pieces = Math.floor(clamp(loss / pieceMassBase, minPieces, maxPieces));
-    const pieceMass = loss / Math.max(1, pieces);
     cell.mass -= loss;
     cell.mergeDelay = Math.max(cell.mergeDelay, mergeCooldown(cell.mass, "virus") * 0.42);
     cell.mergeMax = Math.max(cell.mergeMax || 0, cell.mergeDelay);
@@ -3982,26 +3760,26 @@
     const big = virus.kind === "big";
     const color = virusColor(virus);
     const available = maxCellsFor(group) - group.cells.length + 1;
-    const totalMass = cell.mass + virusBaseMass(virus) * (big ? 1.02 : 1.08);
+    const config = modeConfig();
+    const plan = gameplayCore.virusSplitPlan({
+      cellMass: cell.mass,
+      virusMass: virusBaseMass(virus),
+      big,
+      player: group.isPlayer,
+      available,
+      playerPieceCap: big ? config.bigVirusPlayerPieces : config.virusPlayerPieces
+    });
+    const { totalMass, pieces, pieceMass } = plan;
     sparkle(virus.x, virus.y, color, big ? 68 : 40, big ? 310 : 250);
     ring(virus.x, virus.y, color, big ? 230 : 170);
 
-    if (available < 2 || totalMass < (big ? 180 : 120)) {
+    if (!plan.split) {
       cell.mass = totalMass;
       cell.mergeDelay = Math.max(cell.mergeDelay, mergeCooldown(totalMass, big ? "virus-big" : "virus"));
       cell.mergeMax = Math.max(cell.mergeMax || 0, cell.mergeDelay);
       return;
     }
 
-    const config = modeConfig();
-    const playerPieceCap = big
-      ? (config.bigVirusPlayerPieces || 8)
-      : (config.virusPlayerPieces || 6);
-    const pieceCap = Math.max(2, group.isPlayer ? playerPieceCap : (big ? 10 : 7));
-    const pieceFloor = Math.min(pieceCap, group.isPlayer ? (big ? 5 : 4) : (big ? 8 : 6));
-    const massDivisor = group.isPlayer ? (big ? 46 : 54) : (big ? 34 : 42);
-    const pieces = Math.min(available, clamp(Math.floor(totalMass / massDivisor), pieceFloor, pieceCap));
-    const pieceMass = totalMass / pieces;
     group.cells.splice(index, 1);
 
     for (let i = 0; i < pieces; i++) {
@@ -4683,8 +4461,9 @@
       cell.vy -= n.y * 50;
 
       const child = makeCell(group, cell.x + n.x * (radiusFromMass(newMass) + 10), cell.y + n.y * (radiusFromMass(newMass) + 10), newMass);
-      child.vx = cell.vx + n.x * 650 * (opts.power || 1);
-      child.vy = cell.vy + n.y * 650 * (opts.power || 1);
+      const launch = gameplayCore.splitVelocity(cell, target, opts.power || 1);
+      child.vx = launch.vx;
+      child.vy = launch.vy;
       child.mergeDelay = cooldown;
       child.mergeMax = cooldown;
       group.cells.push(child);
@@ -4931,8 +4710,81 @@
     input.ejectHeld = false;
     ejectBtn.classList.remove("active");
     pauseBtn.textContent = "停";
-    showStartOverlay();
+    showTitleScreen();
     updateHud(performance.now(), true);
+  }
+
+  function multiplayerUrl() {
+    const url = new URL("./multiplayer.html", location.href);
+    const params = new URLSearchParams(location.search);
+    if (params.has("desktop")) url.searchParams.set("desktop", params.get("desktop"));
+    if (params.has("refresh")) url.searchParams.set("refresh", params.get("refresh"));
+    if (params.has("debug")) url.searchParams.set("debug", params.get("debug"));
+    return url.href;
+  }
+
+  function showTitlePanel(name) {
+    const panelName = ["home", "settings", "controls", "about"].includes(name) ? name : "home";
+    for (const panel of titleScreen.querySelectorAll("[data-title-panel]")) {
+      const active = panel.dataset.titlePanel === panelName;
+      panel.hidden = !active;
+      panel.classList.toggle("active", active);
+    }
+    if (panelName === "settings") populateSettingsForm();
+    const activePanel = titleScreen.querySelector(`[data-title-panel="${panelName}"]`);
+    requestAnimationFrame(() => activePanel?.querySelector("button, select, input, a")?.focus({ preventScroll: true }));
+  }
+
+  function showTitleScreen(panelName = "home") {
+    game.menu = true;
+    game.paused = true;
+    overlay.style.display = "none";
+    document.documentElement.classList.add("title-active");
+    document.querySelector(".hud")?.setAttribute("aria-hidden", "true");
+    titleScreen.hidden = false;
+    titleScreen.style.display = "grid";
+    showTitlePanel(panelName);
+    titleRuntimeStatus.textContent = `图形目标 ${TARGET_RENDER_FPS} FPS · 单人物理 60 Hz · ${gpuRenderer?.info().active ? "硬件加速已启用" : "正在检测渲染器"}`;
+  }
+
+  function openSingleLobby() {
+    document.documentElement.classList.remove("title-active");
+    document.querySelector(".hud")?.removeAttribute("aria-hidden");
+    titleScreen.hidden = true;
+    titleScreen.style.display = "none";
+    showStartOverlay();
+  }
+
+  function openPersonalCenter() {
+    openSingleLobby();
+    document.documentElement.classList.add("title-active");
+    document.querySelector(".hud")?.setAttribute("aria-hidden", "true");
+    resultTitle.textContent = "个人中心";
+    resultText.textContent = "外观、成长、商店与锻造使用同一份本地存档，当前装备会自动带入单人和联机。";
+    showLobbyPanel("outfit");
+  }
+
+  function populateSettingsForm() {
+    if (!settingsForm) return;
+    const saved = settingsApi.load();
+    settingsForm.elements.displayMode.value = saved.displayMode;
+    settingsForm.elements.windowSize.value = saved.windowSize;
+    settingsForm.elements.frameRate.value = saved.frameRate;
+    settingsForm.elements.quality.value = saved.quality;
+    settingsForm.elements.networkBuffer.value = saved.networkBuffer;
+    settingsForm.elements.showPerformance.checked = saved.showPerformance;
+    settingsForm.elements.screenShake.checked = saved.screenShake;
+    settingsForm.elements.windowSize.disabled = saved.displayMode !== "windowed";
+    const note = document.getElementById("displayRefreshNote");
+    if (note) note.textContent = `检测到桌面刷新率 ${REQUESTED_REFRESH_RATE} Hz；当前图形目标 ${TARGET_RENDER_FPS} FPS。保存后单人和联机使用同一设置。`;
+  }
+
+  function updateFullscreenButton(state) {
+    const button = document.getElementById("titleFullscreenBtn");
+    if (!button) return;
+    const fullscreen = state?.fullscreen ?? Boolean(document.fullscreenElement);
+    button.textContent = fullscreen ? "退出全屏" : "无边框全屏";
+    button.setAttribute("aria-pressed", String(fullscreen));
   }
 
   function setModeSelection(modeKey) {
@@ -5004,11 +4856,12 @@
   function draw(now) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const shakeX = game.shake ? (Math.random() - 0.5) * game.shake : 0;
-    const shakeY = game.shake ? (Math.random() - 0.5) * game.shake : 0;
+    const shakeX = gameSettings.screenShake && game.shake ? (Math.random() - 0.5) * game.shake : 0;
+    const shakeY = gameSettings.screenShake && game.shake ? (Math.random() - 0.5) * game.shake : 0;
     const useGpuFood = Boolean(gpuRenderer && gpuRenderer.active && gpuRenderer.supportsSprites);
-    const updateGpuCache = gpuRenderer && gpuRenderer.active && (now - lastGpuFrame >= 1000 / GPU_CACHE_FPS || !backgroundCacheReady);
-    if (updateGpuCache) {
+    const gpuFrameFps = perf.lowQuality ? Math.min(60, GPU_CACHE_FPS) : GPU_CACHE_FPS;
+    const updateGpuLayer = gpuRenderer && gpuRenderer.active && (now - lastGpuFrame >= 1000 / gpuFrameFps || !gpuLayerReady);
+    if (updateGpuLayer) {
       const foodSprites = useGpuFood ? collectGpuFoodSprites() : null;
       gpuFrameState.time = now;
       gpuFrameState.camera.x = camera.x - shakeX / Math.max(0.08, zoom);
@@ -5016,22 +4869,17 @@
       gpuFrameState.zoom = zoom;
       gpuFrameState.foods = foodSprites;
       if (gpuRenderer.render(gpuFrameState)) {
-        backgroundCacheCtx.globalCompositeOperation = "copy";
-        backgroundCacheCtx.drawImage(gpuCanvas, 0, 0);
-        backgroundCacheCtx.globalCompositeOperation = "source-over";
-        backgroundCacheReady = true;
-        backgroundCacheHasFood = useGpuFood;
+        gpuLayerReady = true;
+        gpuLayerHasFood = useGpuFood;
         lastGpuFrame = now;
         if (foodSprites) perf.drawnFood = foodSprites.length;
       }
     }
-    if (!gpuRenderer || !gpuRenderer.active) backgroundCacheReady = false;
-    const gpuBackground = backgroundCacheReady;
-    const gpuFoodRendered = Boolean(gpuBackground && backgroundCacheHasFood);
+    if (!gpuRenderer || !gpuRenderer.active) gpuLayerReady = false;
+    const gpuBackground = gpuLayerReady;
+    const gpuFoodRendered = Boolean(gpuBackground && gpuLayerHasFood);
     if (gpuBackground) {
-      ctx.globalCompositeOperation = "copy";
-      ctx.drawImage(backgroundCacheCanvas, 0, 0, backgroundCacheCanvas.width, backgroundCacheCanvas.height, 0, 0, view.w, view.h);
-      ctx.globalCompositeOperation = "source-over";
+      ctx.clearRect(0, 0, view.w, view.h);
     } else {
       ctx.fillStyle = "#061015";
       ctx.fillRect(0, 0, view.w, view.h);
@@ -6328,7 +6176,16 @@
   document.addEventListener("keydown", event => {
     if (event.target && ["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
     const key = event.key.toLowerCase();
-    if (event.code === "Space") {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (!titleScreen.hidden && titleScreen.style.display !== "none") {
+        showTitlePanel("home");
+      } else if (overlay.style.display === "grid" && (game.menu || game.over)) {
+        showTitleScreen();
+      } else if (!game.menu && !game.over) {
+        returnToLobby();
+      }
+    } else if (event.code === "Space") {
       event.preventDefault();
       if (!event.repeat && !game.menu) splitGroup(playerGroup, cursorPoint(), { power: 1 });
     } else if (key === "a" && modeConfig().quickMerge) {
@@ -6417,6 +6274,82 @@
   menuBtn.addEventListener("click", returnToLobby);
   document.getElementById("restartBtn").addEventListener("click", () => startGame(game.menu || game.over ? selectedMode : activeMode));
   playAgainBtn.addEventListener("click", () => startGame(selectedMode));
+  document.getElementById("titleSingleBtn")?.addEventListener("click", openSingleLobby);
+  document.getElementById("heroStartBtn")?.addEventListener("click", openSingleLobby);
+  document.getElementById("titleProfileBtn")?.addEventListener("click", openPersonalCenter);
+  document.getElementById("titleOnlineBtn")?.addEventListener("click", () => { location.href = multiplayerUrl(); });
+  document.querySelector(".online-entry")?.addEventListener("click", event => {
+    event.preventDefault();
+    location.href = multiplayerUrl();
+  });
+  titleScreen?.addEventListener("click", async event => {
+    const openButton = event.target.closest("[data-title-open]");
+    if (openButton) showTitlePanel(openButton.dataset.titleOpen);
+    if (event.target.closest("[data-title-back]")) showTitlePanel("home");
+    const copyButton = event.target.closest("[data-copy-text]");
+    if (copyButton) {
+      event.preventDefault();
+      const value = copyButton.dataset.copyText || "";
+      try {
+        const copied = await copyText(value);
+        showLobbyToast(copied ? `已复制：${value}` : `复制失败，请手动记录：${value}`, copied ? "#58edc8" : "#ff7a90");
+      } catch {
+        showLobbyToast(`复制失败，请手动记录：${value}`, "#ff7a90");
+      }
+      return;
+    }
+    const external = event.target.closest("a[data-external]");
+    if (external && window.starClusterDesktop?.openExternal) {
+      event.preventDefault();
+      try {
+        const result = await window.starClusterDesktop.openExternal(external.href);
+        showLobbyToast(result?.ok ? "已在系统浏览器中打开" : result?.error || "无法打开外部链接", result?.ok ? "#58edc8" : "#ff7a90");
+      } catch {
+        showLobbyToast("无法打开外部链接", "#ff7a90");
+      }
+    }
+  });
+  settingsForm?.elements.displayMode?.addEventListener("change", () => {
+    settingsForm.elements.windowSize.disabled = settingsForm.elements.displayMode.value !== "windowed";
+  });
+  settingsForm?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const saved = settingsApi.save({
+      displayMode: settingsForm.elements.displayMode.value,
+      windowSize: settingsForm.elements.windowSize.value,
+      frameRate: settingsForm.elements.frameRate.value,
+      quality: settingsForm.elements.quality.value,
+      networkBuffer: settingsForm.elements.networkBuffer.value,
+      showPerformance: settingsForm.elements.showPerformance.checked,
+      screenShake: settingsForm.elements.screenShake.checked
+    });
+    if (window.starClusterDesktop?.setDisplayMode) {
+      try {
+        updateFullscreenButton(await window.starClusterDesktop.setDisplayMode({ mode: saved.displayMode, windowSize: saved.windowSize }));
+      } catch {
+        showLobbyToast("显示模式应用失败，仍可使用 F11 切换", "#ff7a90");
+        return;
+      }
+    }
+    location.reload();
+  });
+  document.getElementById("titleFullscreenBtn")?.addEventListener("click", async () => {
+    try {
+      if (window.starClusterDesktop?.toggleFullscreen) {
+        updateFullscreenButton(await window.starClusterDesktop.toggleFullscreen());
+      } else if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen?.();
+        updateFullscreenButton({ fullscreen: true });
+      } else {
+        await document.exitFullscreen?.();
+        updateFullscreenButton({ fullscreen: false });
+      }
+    } catch {
+      showLobbyToast("全屏切换失败，桌面版仍可按 F11", "#ff7a90");
+    }
+  });
+  lobbyBackBtn?.addEventListener("click", () => showTitleScreen());
+  document.getElementById("titleQuitBtn")?.addEventListener("click", () => window.starClusterDesktop?.quitApp?.());
   lobbyTabs.addEventListener("click", event => {
     const button = event.target.closest("[data-lobby]");
     if (!button) return;
@@ -6480,6 +6413,22 @@
     cancelAnimationFrame(resizeFrame);
     resizeFrame = requestAnimationFrame(resize);
   }, { passive: true });
+  document.addEventListener("fullscreenchange", () => updateFullscreenButton());
+  if (window.starClusterDesktop?.onDisplayState) {
+    window.starClusterDesktop.onDisplayState(state => {
+      updateFullscreenButton(state);
+      const saved = settingsApi.load();
+      if (state?.mode && saved.displayMode !== state.mode) settingsApi.save({ ...saved, displayMode: state.mode });
+    });
+  }
+  if (window.starClusterDesktop?.setDisplayMode) {
+    const saved = settingsApi.load();
+    void window.starClusterDesktop.setDisplayMode({ mode: saved.displayMode, windowSize: saved.windowSize })
+      .then(updateFullscreenButton)
+      .catch(() => updateFullscreenButton());
+  } else {
+    updateFullscreenButton();
+  }
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       lastFrame = performance.now();
@@ -6566,6 +6515,8 @@
           longFrames: perf.longFrames,
           pixelRatio: Math.round(dpr * 100) / 100,
           targetFps: TARGET_RENDER_FPS,
+          renderedFrames: perf.renderedFrames,
+          skippedRenderFrames: perf.skippedRenderFrames,
           simulationFps: Math.round(1 / SIMULATION_STEP),
           renderer: gpuRenderer ? gpuRenderer.info() : { active: false, backend: "Canvas 2D" },
           drawnFood: perf.drawnFood,
@@ -7155,15 +7106,35 @@
   function adaptRenderScale(now) {
     if (now < perf.nextQualityCheck) return;
     perf.nextQualityCheck = now + 5000;
-    // Resizing a 4K canvas reallocates large GPU textures and creates a visible
-    // blank frame. Keep the render target stable during play and only reconcile
-    // its size while the lobby/result overlay is already covering the arena.
+    const ceiling = renderRatioCeiling();
     if (game.menu || game.over) {
-      const nextCap = renderRatioCeiling();
-      if (Math.abs(nextCap - perf.pixelRatioCap) >= 0.05) {
-        perf.pixelRatioCap = nextCap;
+      perf.qualityPressure = 0;
+      perf.qualityRecovery = 0;
+      if (Math.abs(ceiling - perf.pixelRatioCap) >= 0.05) {
+        perf.pixelRatioCap = ceiling;
         resize();
       }
+      return;
+    }
+
+    const pressured = perf.avgFrame > TARGET_FRAME_MS * 1.1 || perf.avgWork > TARGET_FRAME_MS * 0.86;
+    const comfortable = perf.avgFrame < TARGET_FRAME_MS * 1.03 && perf.avgWork < TARGET_FRAME_MS * 0.68;
+    perf.qualityPressure = pressured ? perf.qualityPressure + 1 : 0;
+    perf.qualityRecovery = comfortable ? perf.qualityRecovery + 1 : 0;
+
+    const pressureThreshold = perf.avgFrame > TARGET_FRAME_MS * 1.45 ? 1 : 2;
+    if (perf.qualityPressure >= pressureThreshold && perf.pixelRatioCap > 0.7) {
+      perf.pixelRatioCap = Math.max(0.7, Math.min(ceiling, perf.pixelRatioCap - 0.1));
+      perf.qualityPressure = 0;
+      perf.qualityRecovery = 0;
+      perf.scaleChanges += 1;
+      resize();
+    } else if (perf.qualityRecovery >= 4 && perf.pixelRatioCap < ceiling - 0.04) {
+      perf.pixelRatioCap = Math.min(ceiling, perf.pixelRatioCap + 0.05);
+      perf.qualityPressure = 0;
+      perf.qualityRecovery = 0;
+      perf.scaleChanges += 1;
+      resize();
     }
   }
 
@@ -7182,7 +7153,12 @@
       spriteBatching: Boolean(info.spriteBatching),
       maxFrame: Math.round(perf.maxFrame * 10) / 10,
       longFrames: perf.longFrames,
-      lowQuality: perf.lowQuality
+      lowQuality: perf.lowQuality,
+      scaleChanges: perf.scaleChanges,
+      renderedFrames: perf.renderedFrames,
+      skippedRenderFrames: perf.skippedRenderFrames,
+      gpuPixelRatio: info.pixelRatio || 0,
+      gpuFrameFps: perf.lowQuality ? Math.min(60, GPU_CACHE_FPS) : GPU_CACHE_FPS
     });
     if (navigator.sendBeacon) {
       navigator.sendBeacon("/api/telemetry", new Blob([payload], { type: "application/json" }));
@@ -7196,15 +7172,6 @@
     lastFrame = now;
     perf.maxFrame = Math.max(perf.maxFrame, frameElapsed);
     if (frameElapsed > 80) perf.longFrames += 1;
-    perf.avgFrame += (dt * 1000 - perf.avgFrame) * 0.06;
-    const highSplitMode = maxCellsFor(playerGroup) > 32;
-    const cellPressure = renderCells.length > (highSplitMode ? 500 : 620) || (playerGroup && playerGroup.cells.length > 42);
-    const objectPressure = ejected.length > 260 || particles.length > MAX_PARTICLES * 0.78;
-    if (perf.avgFrame > TARGET_FRAME_MS * 1.4 || perf.avgWork > TARGET_FRAME_MS * 0.85 || cellPressure || objectPressure) {
-      perf.lowQuality = true;
-    } else if (perf.avgFrame < TARGET_FRAME_MS * 1.12 && perf.avgWork < TARGET_FRAME_MS * 0.62 && renderCells.length < (highSplitMode ? 340 : 420) && ejected.length < 170 && particles.length < MAX_PARTICLES * 0.42 && (!playerGroup || playerGroup.cells.length < 28)) {
-      perf.lowQuality = false;
-    }
 
     let interpolation = 1;
     if (!game.paused && !game.over) {
@@ -7227,9 +7194,28 @@
       simulationNow = now;
     }
 
-    applyInterpolatedFrame(interpolation);
-    draw(now);
-    restoreInterpolatedFrame();
+    const cadence = gameplayCore.advanceRenderCadence(now, nextRenderAt, TARGET_RENDER_INTERVAL);
+    nextRenderAt = cadence.nextRenderAt;
+    if (cadence.due) {
+      const renderedElapsed = lastRenderedAt ? now - lastRenderedAt : TARGET_RENDER_INTERVAL;
+      lastRenderedAt = now;
+      perf.avgFrame += (renderedElapsed - perf.avgFrame) * 0.06;
+      perf.renderedFrames += 1;
+      const highSplitMode = maxCellsFor(playerGroup) > 32;
+      const cellPressure = renderCells.length > (highSplitMode ? 500 : 620) || (playerGroup && playerGroup.cells.length > 42);
+      const objectPressure = ejected.length > 260 || particles.length > MAX_PARTICLES * 0.78;
+      if (perf.avgFrame > TARGET_FRAME_MS * 1.4 || perf.avgWork > TARGET_FRAME_MS * 0.85 || cellPressure || objectPressure) {
+        perf.lowQuality = true;
+      } else if (perf.avgFrame < TARGET_FRAME_MS * 1.12 && perf.avgWork < TARGET_FRAME_MS * 0.62 && renderCells.length < (highSplitMode ? 340 : 420) && ejected.length < 170 && particles.length < MAX_PARTICLES * 0.42 && (!playerGroup || playerGroup.cells.length < 28)) {
+        perf.lowQuality = false;
+      }
+
+      applyInterpolatedFrame(interpolation);
+      draw(now);
+      restoreInterpolatedFrame();
+    } else {
+      perf.skippedRenderFrames += 1;
+    }
     const work = performance.now() - workStartedAt;
     perf.avgWork += (work - perf.avgWork) * 0.06;
     adaptRenderScale(now);
@@ -7242,9 +7228,11 @@
   }
   window.addEventListener("pagehide", reportRuntime, { once: true });
   resize();
+  document.documentElement.classList.toggle("hide-performance", !gameSettings.showPerformance);
+  document.documentElement.classList.toggle("desktop-env", Boolean(window.starClusterDesktop?.desktop));
   updateMusicButtons();
   setModeSelection("battle");
-  startGame(selectedMode, { menu: true });
+  startGame(selectedMode, { menu: true, title: true });
   requestAnimationFrame(now => {
     lastFrame = now;
     simulationNow = now;

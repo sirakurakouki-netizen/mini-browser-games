@@ -248,10 +248,104 @@ test("spore viruses burst into configured, mass-conserving collectible pieces", 
   assert.ok(cell.mass < beforeMass);
   const lostMass = beforeMass - cell.mass;
   const collectibleMass = burstPieces.reduce((sum, piece) => sum + piece.mass, 0);
-  assert.ok(Math.abs(collectibleMass - lostMass * 0.9) < 1e-6);
-  assert.ok(burstPieces.every(piece => piece.ownerId === null && piece.color === "#f472b6"));
+  assert.ok(Math.abs(collectibleMass - lostMass) < 1e-6);
+  assert.ok(burstPieces.every(piece => piece.ownerId === group.id && piece.color === "#7dd3fc" && piece.spore === "mint"));
   assert.ok(!simulation.viruses.some(candidate => candidate.id === virus.id));
   assert.ok(simulation.events.some(event => event.event === "virus-burst" && event.data.spore));
+});
+
+test("ordinary viruses split cells without producing collectible spores", () => {
+  const simulation = createSimulation("solo");
+  const group = simulation.groups[0];
+  const cell = group.cells[0];
+  const virus = simulation.viruses[0];
+  Object.assign(virus, { kind: "small", spore: false, mass: 95, radius: 42 });
+  simulation.viruses = [virus];
+  setCell(cell, { x: virus.x, y: virus.y, mass: 1_000 });
+  const massBefore = cell.mass;
+  const ejectedBefore = simulation.ejected.length;
+  simulation.events = [];
+  simulation.handleVirusCollisions();
+
+  assert.ok(group.cells.length >= 4);
+  assert.equal(simulation.ejected.length, ejectedBefore);
+  assert.ok(Math.abs(simulation.groupMass(group) - (massBefore + 95 * 1.08)) < 1e-6);
+  assert.ok(simulation.events.some(event => event.event === "virus-split" && event.data.kind === "small"));
+  assert.ok(!simulation.events.some(event => event.event === "virus-burst"));
+});
+
+test("ejected mass uses the canonical outer-contact radius and owner pickup window", () => {
+  const simulation = createSimulation("solo");
+  const group = simulation.groups[0];
+  const cell = group.cells[0];
+  for (const candidate of simulation.groups) {
+    if (candidate !== group) candidate.eliminated = true;
+  }
+  setCell(cell, { x: 1_000, y: 1_000, mass: 400 });
+  const itemMass = 12;
+  const itemRadius = Math.sqrt(itemMass) * 4;
+  simulation.ejected = [{
+    id: "pickup-edge",
+    ownerId: group.id,
+    x: cell.x + cell.radius + itemRadius * 0.4,
+    y: cell.y,
+    vx: 0,
+    vy: 0,
+    mass: itemMass,
+    radius: itemRadius,
+    ageTicks: Math.ceil(0.32 * SIMULATION_CONSTANTS.SERVER_HZ) - 2,
+    color: "#7dd3fc",
+    accent: "#ffffff",
+    spore: "mint"
+  }];
+
+  simulation.updateEjected();
+  assert.equal(simulation.ejected.length, 1, "保护窗口内仍不能拾取自己的吐球");
+  simulation.updateEjected();
+  assert.equal(simulation.ejected.length, 0, "保护窗口结束后在外缘接触即被权威服务器确认");
+});
+
+test("all ten modes use the same ejected-virus feeding and launch rule", async t => {
+  for (const mode of EXPECTED_MODES) {
+    await t.test(mode, () => {
+      const simulation = createSimulation(mode);
+      const virus = simulation.viruses[0];
+      Object.assign(virus, {
+        x: 2_600,
+        y: 2_600,
+        radius: 42,
+        mass: 95,
+        baseMass: 95,
+        kind: "small",
+        spore: false,
+        launched: false,
+        ageSeconds: 0
+      });
+      simulation.viruses = [virus];
+      simulation.ejected = [{
+        id: `feed-${mode}`,
+        ownerId: simulation.groups[0].id,
+        x: 2_550,
+        y: 2_600,
+        vx: 0,
+        vy: 0,
+        mass: 150,
+        radius: 14,
+        ageTicks: 20,
+        color: "#7dd3fc",
+        accent: "#ffffff",
+        spore: "mint"
+      }];
+
+      simulation.updateEjected();
+      assert.equal(simulation.ejected.length, 0);
+      assert.equal(simulation.viruses.length, 2);
+      const launched = simulation.viruses.find(candidate => candidate.id !== virus.id);
+      assert.ok(launched?.launched);
+      assert.ok(launched.vx > 0);
+      assert.equal(launched.kind, "small");
+    });
+  }
 });
 
 test("screen exposes the square arena, 64-cell cap and cooldown-gated skills", () => {
@@ -301,7 +395,8 @@ test("control points contest, capture, score and settle exactly once", () => {
   assert.equal(point.owner, null);
 
   setCell(teamOne.cells[0], { x: 300, y: 300, mass: 200 });
-  for (let index = 0; index < 100 && point.owner == null; index += 1) simulation.updateControlPoints();
+  const captureTicks = Math.ceil(100 / ((simulation.config.control.capturePerSecond || 24) / SIMULATION_CONSTANTS.SERVER_HZ)) + 3;
+  for (let index = 0; index < captureTicks && point.owner == null; index += 1) simulation.updateControlPoints();
   assert.equal(point.owner, 0);
   assert.equal(point.progress, 100);
   assert.ok((simulation.teamScores.get(0) || 0) > 0);

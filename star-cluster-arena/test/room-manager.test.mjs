@@ -8,6 +8,7 @@ import {
   SNAPSHOT_BACKPRESSURE_LIMIT_BYTES
 } from "../backend/multiplayer/room-manager.mjs";
 import { PROTOCOL_VERSION, ProtocolError } from "../backend/multiplayer/protocol.mjs";
+import { SIMULATION_CONSTANTS } from "../backend/multiplayer/simulation-v2.mjs";
 
 await import("../frontend/js/snapshot-wire.js");
 
@@ -45,11 +46,11 @@ class FakeSocket extends EventEmitter {
   }
 }
 
-function join(manager, room, name, hostToken = "") {
+function join(manager, room, name, hostToken = "", cosmetics = undefined) {
   const socket = new FakeSocket();
   socket.room = room;
   manager.connectSocket(socket, room.code);
-  socket.clientSend({ type: "join", protocol: PROTOCOL_VERSION, name, hostToken });
+  socket.clientSend({ type: "join", protocol: PROTOCOL_VERSION, name, hostToken, cosmetics });
   return socket;
 }
 
@@ -59,15 +60,27 @@ test("room capacity, host identity and public lobby are enforced", async t => {
   const created = manager.createRoom({ name: "房主", roomName: "容量测试", maxPlayers: 2, botCount: 99 });
   const room = manager.getRoom(created.code);
   assert.equal(room.settings.maxPlayers, 2);
-  assert.equal(room.settings.botCount, 12);
+  assert.equal(room.settings.botCount, 99);
 
-  const host = join(manager, room, "房主", created.hostToken);
+  const host = join(manager, room, "房主", created.hostToken, {
+    skin: "dragon",
+    spore: "royal",
+    halo: "gravity",
+    trail: "demon-trail"
+  });
   const guest = join(manager, room, "客人");
   const overflow = join(manager, room, "第三人");
   assert.equal(host.latest("welcome").host, true);
   assert.equal(guest.latest("welcome").host, false);
   assert.equal(overflow.latest("error", "room-full").message, "房间已满");
   assert.equal(manager.publicLobby(room).players.length, 2);
+  assert.equal(room.settings.botCount, 98);
+  assert.deepEqual(manager.publicLobby(room).players[0].cosmetics, {
+    skin: "dragon",
+    spore: "royal",
+    halo: "gravity",
+    trail: "demon-trail"
+  });
   assert.equal(manager.stats().connections, 2);
 });
 
@@ -118,7 +131,7 @@ test("voluntary guest leave is immediate and voluntary host leave closes the roo
   assert.equal(manager.getRoom(created.code), null);
 });
 
-test("the host can update lobby mode and bots while ready state is invalidated", async t => {
+test("the host can update lobby mode while automatic fill and ready state are recalculated", async t => {
   const manager = new RoomManager();
   t.after(() => manager.close());
   const created = manager.createRoom({ mode: "screen", maxPlayers: 4, botCount: 2, seed: 7 });
@@ -139,11 +152,12 @@ test("the host can update lobby mode and bots while ready state is invalidated",
 
   host.clientSend({ type: "update-settings", mode: "demon", botCount: 0 });
   assert.equal(room.settings.mode, "demon");
-  assert.equal(room.settings.botCount, 4);
+  assert.equal(room.settings.targetParticipants, 10);
+  assert.equal(room.settings.botCount, 8);
   assert.equal(room.revision, 2);
   assert.ok([...room.players.values()].every(player => !player.ready));
   assert.equal(guest.latest("lobby").room.settings.mode, "demon");
-  assert.equal(guest.latest("lobby").room.settings.botCount, 4);
+  assert.equal(guest.latest("lobby").room.settings.botCount, 8);
   assert.equal(guest.latest("lobby").room.configVersion, 2);
 
   host.clientSend({ type: "ready", ready: true });
@@ -217,10 +231,10 @@ test("the fixed-step accumulator emits every retained tick and clamps permanent 
   assert.equal(manager.runRoomLoop(room, currentTime), MAX_CATCH_UP_STEPS);
   assert.equal(room.simulation.tick, 4);
   assert.equal(manager.stats().tickDrift, 0);
-  assert.equal(manager.stats().skippedSimulationMs, 100);
+  assert.ok(Math.abs(manager.stats().skippedSimulationMs - (300 - 4 * 1000 / SIMULATION_CONSTANTS.SERVER_HZ)) < 0.01);
   assert.equal(manager.stats().catchUpClamps, 1);
 
-  currentTime += 50;
+  currentTime += 1000 / SIMULATION_CONSTANTS.SERVER_HZ;
   assert.equal(manager.runRoomLoop(room, currentTime), 1);
   assert.equal(room.simulation.tick, 5);
   const ticks = host.messages.filter(message => message.type === "snapshot").map(message => message.tick);

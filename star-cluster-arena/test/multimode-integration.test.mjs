@@ -98,7 +98,7 @@ test("the public API and real WebSocket flow support all ten LAN modes", async t
     const response = await fetch(`${server.url}/api/rooms`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "host", roomName: `${mode}-e2e`, mode, maxPlayers: 2, botCount: 4, seed: 320 })
+      body: JSON.stringify({ name: "host", roomName: `${mode}-e2e`, mode, maxPlayers: 2, seed: 320 })
     });
     assert.equal(response.status, 201, mode);
     const room = await response.json();
@@ -127,7 +127,10 @@ test("the public API and real WebSocket flow support all ten LAN modes", async t
     assert.equal(dynamic.configVersion, started.configVersion);
     assert.equal(dynamic.foodDelta.fromRevision <= dynamic.foodDelta.toRevision, true);
     assert.equal(dynamic.virusDelta.fromRevision <= dynamic.virusDelta.toRevision, true);
-    assert.ok(dynamic.wireBytes < 16 * 1024, `${mode}: ${dynamic.wireBytes} bytes`);
+    const modeConfig = catalog.modes.find(candidate => candidate.key === mode);
+    assert.equal(baseline.groups.length, modeConfig.targetParticipants, `${mode}: canonical participant target`);
+    assert.equal(baseline.groups.filter(group => group.human).length, 2, `${mode}: human participants`);
+    assert.ok(dynamic.wireBytes < 96 * 1024, `${mode}: ${dynamic.wireBytes} bytes`);
     assertModeState(mode, baseline);
     await Promise.all([host.close(), guest.close()]);
   }

@@ -1,4 +1,4 @@
-export const SNAPSHOT_WIRE_VERSION = 2;
+export const SNAPSHOT_WIRE_VERSION = 3;
 
 // The wire contract deliberately uses fixed-position arrays. Keep every index
 // in this module so a protocol change is explicit, reviewable, and testable.
@@ -55,14 +55,15 @@ export const GROUP_INDEX = Object.freeze({
   SPECIAL_COOLDOWN: 12,
   RANK: 13,
   MASS: 14,
-  CELLS: 15,
-  LENGTH: 16
+  COSMETICS: 15,
+  CELLS: 16,
+  LENGTH: 17
 });
 export const GROUP_FLAGS = Object.freeze({ HUMAN: 1, CONNECTED: 2, DEAD: 4, ELIMINATED: 8 });
 export const CELL_INDEX = Object.freeze({ ID: 0, X: 1, Y: 2, VX: 3, VY: 4, RADIUS: 5, LENGTH: 6 });
-export const EJECTED_INDEX = Object.freeze({ ID: 0, X: 1, Y: 2, VX: 3, VY: 4, RADIUS: 5, COLOR: 6, LENGTH: 7 });
+export const EJECTED_INDEX = Object.freeze({ ID: 0, X: 1, Y: 2, VX: 3, VY: 4, RADIUS: 5, COLOR: 6, OWNER_ID: 7, SPORE: 8, ACCENT: 9, LENGTH: 10 });
 export const FOOD_INDEX = Object.freeze({ ID: 0, X: 1, Y: 2, RADIUS: 3, COLOR: 4, LENGTH: 5 });
-export const VIRUS_INDEX = Object.freeze({ ID: 0, X: 1, Y: 2, RADIUS: 3, COLOR: 4, SPORE: 5, LENGTH: 6 });
+export const VIRUS_INDEX = Object.freeze({ ID: 0, X: 1, Y: 2, RADIUS: 3, COLOR: 4, KIND: 5, LENGTH: 6 });
 export const DELTA_INDEX = Object.freeze({
   FROM_REVISION: 0,
   TO_REVISION: 1,
@@ -162,12 +163,13 @@ function compactGroup(group) {
     group.specialCooldown,
     group.rank,
     group.mass,
+    [group.cosmetics?.skin, group.cosmetics?.spore, group.cosmetics?.halo, group.cosmetics?.trail],
     (group.cells || []).map(compactCell)
   ];
 }
 
 function compactEjected(item) {
-  return [item.id, item.x, item.y, item.vx, item.vy, item.radius, item.color];
+  return [item.id, item.x, item.y, item.vx, item.vy, item.radius, item.color, item.ownerId, item.spore, item.accent];
 }
 
 function compactFood(food) {
@@ -175,7 +177,7 @@ function compactFood(food) {
 }
 
 function compactVirus(virus) {
-  return [virus.id, virus.x, virus.y, virus.radius, virus.color, virus.spore ? 1 : 0];
+  return [virus.id, virus.x, virus.y, virus.radius, virus.color, virus.kind || (virus.spore ? "spore" : "small")];
 }
 
 function compactDelta(delta, compactEntity) {

@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
+const coreSource = await readFile(new URL("../frontend/js/gameplay-core.js", import.meta.url), "utf8");
 const source = await readFile(new URL("../frontend/js/local-predictor.js", import.meta.url), "utf8");
 const context = { globalThis: {} };
+vm.runInNewContext(coreSource, context, { filename: "gameplay-core.js" });
 vm.runInNewContext(source, context, { filename: "local-predictor.js" });
 const { predictLocalPlayer } = context.globalThis.ScaLocalPredictor;
 
@@ -67,4 +69,20 @@ test("returns the same snapshot when there is no controllable local player", () 
   const original = snapshot();
   assert.equal(predictLocalPlayer(original, { playerId: "missing", estimatedServerTime: 1100 }), original);
   assert.equal(predictLocalPlayer(null, { playerId: "me" }), null);
+});
+
+test("reconciliation never replays inputs already acknowledged by the server", () => {
+  const original = snapshot();
+  original.groups[0].ackInputSeq = 10;
+  const result = predictLocalPlayer(original, {
+    playerId: "me",
+    estimatedServerTime: 1100,
+    currentInput: { dx: 1, dy: 0, targetX: 900, targetY: 500 },
+    inputHistory: [
+      { seq: 10, dx: -1, dy: 0, targetX: 100, targetY: 500, serverTime: 1050 },
+      { seq: 11, dx: 1, dy: 0, targetX: 900, targetY: 500, serverTime: 1075 }
+    ]
+  });
+
+  assert.ok(result.groups[0].cells[0].x > 500, "only the unacknowledged rightward input should be replayed");
 });

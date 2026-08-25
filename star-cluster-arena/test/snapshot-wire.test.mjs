@@ -58,6 +58,7 @@ function createGroup(id = "player-a", cellCount = 2, offset = 0) {
     specialCooldown: 3.4,
     rank: offset + 1,
     mass: cells.reduce((sum, cell) => sum + cell.mass, 0),
+    cosmetics: { skin: "dragon", spore: "royal", halo: "gravity", trail: "demon-trail" },
     cells
   };
 }
@@ -96,7 +97,7 @@ function createSnapshot(overrides = {}) {
     arena: { type: "rect", x: 100, y: 200, width: 4_800, height: 4_600 },
     remaining: 237.5,
     groups,
-    ejected: [{ id: "ejected-1", x: 300, y: 400, vx: 50, vy: -25, radius: 8, color: "#ffd166" }],
+    ejected: [{ id: "ejected-1", x: 300, y: 400, vx: 50, vy: -25, radius: 8, color: "#ffd166", ownerId: "player-a", spore: "royal", accent: "#ffffff" }],
     safeZone: { x: 2_600, y: 2_600, radius: 1_700, targetRadius: 700 },
     controlPoints: [{ id: "point-a", x: 1_300, y: 2_200, radius: 180, owner: 0, captureTeam: 1, progress: 62.5, contested: true }],
     teams: [{ id: "team-0", team: 0, name: "Blue", color: "#44d7b6", mass: 500, kills: 2, score: 35.5, alive: 3 }],
@@ -117,8 +118,8 @@ function throughJson(snapshot) {
   return decodeSnapshot(packet);
 }
 
-test("wire v2 indices are locked and browser/server contracts agree", () => {
-  assert.equal(SNAPSHOT_WIRE_VERSION, 2);
+test("wire v3 indices are locked and browser/server contracts agree", () => {
+  assert.equal(SNAPSHOT_WIRE_VERSION, 3);
   assert.deepEqual(SNAPSHOT_INDEX, {
     TICK: 0, SERVER_TIME: 1, SERVER_HZ: 2, MODE: 3, PHASE: 4, FINISHED: 5,
     FINISH_REASON: 6, WINNER_ID: 7, WORLD: 8, ARENA: 9, REMAINING: 10,
@@ -134,9 +135,9 @@ test("wire v2 indices are locked and browser/server contracts agree", () => {
   assert.equal(WORLD_INDEX.LENGTH, 2);
   assert.equal(ARENA_INDEX.LENGTH, 5);
   assert.equal(SAFE_ZONE_INDEX.LENGTH, 4);
-  assert.equal(GROUP_INDEX.LENGTH, 16);
+  assert.equal(GROUP_INDEX.LENGTH, 17);
   assert.equal(CELL_INDEX.LENGTH, 6);
-  assert.equal(EJECTED_INDEX.LENGTH, 7);
+  assert.equal(EJECTED_INDEX.LENGTH, 10);
   assert.equal(FOOD_INDEX.LENGTH, 5);
   assert.equal(VIRUS_INDEX.LENGTH, 6);
   assert.equal(DELTA_INDEX.LENGTH, 5);
@@ -160,7 +161,7 @@ test("full baseline snapshot round-trips foods and viruses", () => {
       { id: "food-2", x: 303.5, y: 404.5, radius: 6.1, color: "#f59e0b" }
     ],
     foodBaseline: true,
-    viruses: [{ id: "virus-1", x: 800, y: 900, radius: 54, color: "#5eea80", spore: true }],
+    viruses: [{ id: "virus-1", x: 800, y: 900, radius: 54, color: "#f472b6", kind: "spore", spore: true }],
     virusBaseline: true
   });
   const decoded = throughJson(source);
@@ -181,15 +182,23 @@ test("incremental snapshot round-trips revision chains and entity deltas", () =>
     virusDelta: {
       fromRevision: 4,
       toRevision: 5,
-      added: [{ id: "virus-new", x: 700, y: 701, radius: 48, color: "#5eea80", spore: false }],
+      added: [{ id: "virus-new", x: 700, y: 701, radius: 48, color: "#5eea80", kind: "small", spore: false }],
       removed: ["virus-old"],
-      updated: [{ id: "virus-updated", x: 702, y: 703, radius: 50, color: "#f472b6", spore: true }]
+      updated: [{ id: "virus-updated", x: 702, y: 703, radius: 50, color: "#f472b6", kind: "spore", spore: true }]
     }
   });
   const decoded = throughJson(source);
   assert.deepEqual(decoded, { ...source, type: "snapshot" });
   assert.equal(Object.hasOwn(decoded, "foods"), false);
   assert.equal(Object.hasOwn(decoded, "viruses"), false);
+});
+
+test("100 one-cell participants stay below the 96 KiB canonical-room budget", () => {
+  const groups = Array.from({ length: 100 }, (_, index) => createGroup(`g${index}`, 1, index));
+  const source = createSnapshot({ groups, ranking: groups.slice(0, 10).map(createRanking) });
+  const packet = JSON.stringify({ type: "snapshot", ...compactSnapshot(source) });
+  const bytes = Buffer.byteLength(packet);
+  assert.ok(bytes < 96 * 1024, `100-player dynamic snapshot is ${bytes} bytes`);
 });
 
 test("16 groups with 16 cells stay below the 24 KiB dynamic JSON budget", () => {

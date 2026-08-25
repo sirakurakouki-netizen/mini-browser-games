@@ -17,7 +17,7 @@ const DEFAULT_FRONTEND_ROOT = resolve(HERE, "../frontend");
 const DEFAULT_HOST = process.env.HOST || "0.0.0.0";
 const requestedPort = Number.parseInt(process.env.PORT || "25555", 10);
 const DEFAULT_PORT = Number.isInteger(requestedPort) && requestedPort >= 0 && requestedPort < 65536 ? requestedPort : 25555;
-const VERSION = "3.2.0-lan";
+const VERSION = "3.6.0-lan";
 const MAX_TELEMETRY_BYTES = 16 * 1024;
 const MAX_API_BODY_BYTES = 24 * 1024;
 
@@ -159,6 +159,9 @@ export async function startServer(options = {}) {
       protocol: PROTOCOL_VERSION,
       rooms: [...combined.values()].sort((left, right) => (right.seenAt || right.createdAt) - (left.seenAt || left.createdAt) || left.code.localeCompare(right.code)),
       discovery: discovery.status(),
+      servicePort: actualPort,
+      preferredPort: options.preferredPort ?? port,
+      bindHost: host,
       diagnostics: diagnosticsSnapshot()
     };
   }
@@ -217,9 +220,9 @@ export async function startServer(options = {}) {
           discovery: discovery.status(),
           maxHumanPlayers: 8,
           authoritativeServer: true,
-          simulationHz: 20,
-          snapshotHz: 20,
-          inputHz: 30,
+          simulationHz: 30,
+          snapshotHz: 30,
+          inputHz: 60,
           snapshotInterpolation: "adaptive-history",
           modes: publicModeCatalog()
         },
@@ -292,6 +295,7 @@ export async function startServer(options = {}) {
         localRooms: roomManager.roomList().length,
         servicePort: actualPort,
         preferredPort: options.preferredPort ?? port,
+        bindHost: host,
         diagnostics: diagnosticsSnapshot()
       });
       return true;

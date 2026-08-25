@@ -1,12 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { MODE_KEYS, normalizeMode } from "./modes.mjs";
+import "../../frontend/js/cosmetic-catalog.js";
 
-export const PROTOCOL_VERSION = "sca-lan-v2";
+export const PROTOCOL_VERSION = "sca-lan-v6";
 export const DISCOVERY_MAGIC = "SCA-LAN";
 export const DISCOVERY_VERSION = 1;
 export const MAX_CLIENT_MESSAGE_BYTES = 64 * 1024;
 export const MAX_HUMAN_PLAYERS = 8;
-export const MAX_BOTS = 12;
+export const MAX_BOTS = 99;
+
+const cosmeticCatalog = globalThis.ScaCosmeticCatalog;
+if (!cosmeticCatalog) throw new Error("Shared cosmetic catalog failed to load");
 
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -49,6 +53,10 @@ export function sanitizeName(value, fallback = "星友") {
   return cleaned || fallback;
 }
 
+export function sanitizeCosmetics(value) {
+  return { ...cosmeticCatalog.normalizeProfile(value) };
+}
+
 export function integerInRange(value, minimum, maximum, fallback) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -59,6 +67,13 @@ function finiteDirection(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
   return Math.max(-1, Math.min(1, number));
+}
+
+function finiteCoordinate(value) {
+  if (value == null) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(-100_000, Math.min(100_000, number));
 }
 
 export function parseClientMessage(raw) {
@@ -83,6 +98,7 @@ export function parseClientMessage(raw) {
         type: "join",
         protocol: String(value.protocol || ""),
         name: sanitizeName(value.name),
+        cosmetics: sanitizeCosmetics(value.cosmetics),
         hostToken: typeof value.hostToken === "string" ? value.hostToken.slice(0, 128) : "",
         resumeToken: typeof value.resumeToken === "string" ? value.resumeToken.slice(0, 128) : ""
       };
@@ -112,10 +128,7 @@ export function parseClientMessage(raw) {
         if (!MODE_KEYS.includes(candidate)) throw new ProtocolError("invalid-mode", "不支持这个游戏模式");
         message.mode = normalizeMode(candidate);
       }
-      if (Object.hasOwn(value, "botCount")) {
-        message.botCount = integerInRange(value.botCount, 0, MAX_BOTS, 6);
-      }
-      if (!Object.hasOwn(message, "mode") && !Object.hasOwn(message, "botCount")) {
+      if (!Object.hasOwn(message, "mode")) {
         throw new ProtocolError("invalid-settings", "没有可更新的房间设置");
       }
       return message;
@@ -129,6 +142,8 @@ export function parseClientMessage(raw) {
         seq: integerInRange(value.seq, 0, Number.MAX_SAFE_INTEGER, 0),
         dx: length > 1 ? dx / length : dx,
         dy: length > 1 ? dy / length : dy,
+        targetX: finiteCoordinate(value.targetX),
+        targetY: finiteCoordinate(value.targetY),
         split: Boolean(value.split),
         eject: Boolean(value.eject),
         quickMerge: Boolean(value.quickMerge),
@@ -158,6 +173,8 @@ export function publicRoomSummary(room, endpoint = "") {
     players: players.filter(player => player.connected).length,
     maxPlayers: room.settings.maxPlayers,
     botCount: room.settings.botCount,
+    targetParticipants: room.settings.targetParticipants,
+    autoFillBots: room.settings.autoFillBots !== false,
     mode: room.settings.mode,
     configVersion: room.revision || 1,
     endpoint,

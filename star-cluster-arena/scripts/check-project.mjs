@@ -8,10 +8,15 @@ const requiredFiles = [
   "backend/server.mjs",
   "desktop/main.mjs",
   "desktop/preload.mjs",
+  "desktop/external-links.mjs",
   "desktop/forge.config.mjs",
+  "desktop/electron-builder.yml",
   "desktop/assets/icon.ico",
   "frontend/index.html",
   "frontend/multiplayer.html",
+  "frontend/js/cosmetic-catalog.js",
+  "frontend/js/gameplay-core.js",
+  "frontend/js/game-mode-catalog.js",
   "frontend/js/local-predictor.js",
   "frontend/js/multiplayer.js",
   "frontend/js/snapshot-buffer.js",
@@ -19,7 +24,13 @@ const requiredFiles = [
   "backend/multiplayer/modes.mjs",
   "backend/multiplayer/snapshot-wire.mjs",
   "docs/SDD-LAN-MULTIPLAYER-DESKTOP.md",
-  "docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md"
+  "docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md",
+  "docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md",
+  "docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md",
+  "docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md",
+  "docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md",
+  "docs/SDD-CANONICAL-GAMEPLAY-DESKTOP-V3.6.md",
+  "docs/RELEASE-NOTES-V3.6.0.md"
 ];
 
 async function recurse(relativeDirectory) {

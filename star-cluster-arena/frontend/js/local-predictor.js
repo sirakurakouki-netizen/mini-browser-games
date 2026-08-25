@@ -1,9 +1,11 @@
 (function attachLocalPredictor(globalScope) {
   "use strict";
 
+  const gameplayCore = globalScope.ScaGameplayCore;
+  if (!gameplayCore) throw new Error("共享玩法内核未加载");
   const STEP_SECONDS = 0.05;
   const MAX_PREDICTION_MS = 180;
-  const MODE_SPEED = Object.freeze({ blitz: 1.16, spore: 1.06, giant: 0.88 });
+  const MODE_SPEED = gameplayCore.MODE_SPEED;
 
   function clamp(value, minimum, maximum) {
     return Math.max(minimum, Math.min(maximum, value));
@@ -36,7 +38,9 @@
     const estimateInputTime = typeof options.estimateInputTime === "function"
       ? options.estimateInputTime
       : input => input.serverTime;
+    const ackInputSeq = finite(source.ackInputSeq, -1);
     const timedInputs = (options.inputHistory || [])
+      .filter(input => finite(input.seq, 0) > ackInputSeq)
       .map(input => ({ ...input, serverTime: finite(estimateInputTime(input), NaN) }))
       .filter(input => Number.isFinite(input.serverTime))
       .sort((left, right) => left.serverTime - right.serverTime || finite(left.seq) - finite(right.seq));
@@ -50,15 +54,27 @@
     let cursor = authoritativeTime;
     for (const input of timedInputs) {
       if (input.serverTime <= cursor || input.serverTime > targetServerTime) continue;
-      segments.push({ milliseconds: input.serverTime - cursor, dx: finite(direction.dx), dy: finite(direction.dy) });
+      segments.push({
+        milliseconds: input.serverTime - cursor,
+        dx: finite(direction.dx),
+        dy: finite(direction.dy),
+        targetX: finite(direction.targetX, NaN),
+        targetY: finite(direction.targetY, NaN)
+      });
       cursor = input.serverTime;
       direction = input;
     }
     if (cursor < targetServerTime) {
-      segments.push({ milliseconds: targetServerTime - cursor, dx: finite(direction.dx), dy: finite(direction.dy) });
+      segments.push({
+        milliseconds: targetServerTime - cursor,
+        dx: finite(direction.dx),
+        dy: finite(direction.dy),
+        targetX: finite(direction.targetX, NaN),
+        targetY: finite(direction.targetY, NaN)
+      });
     }
 
-    const modeSpeed = MODE_SPEED[snapshot.mode] || 1;
+    const modeSpeed = finite(snapshot.objective?.movementSpeedScale, MODE_SPEED[snapshot.mode] || 1);
     const predicted = {
       ...source,
       locallyPredictedMs: aheadMs,
@@ -68,21 +84,20 @@
           let remaining = segment.milliseconds / 1000;
           while (remaining > 0.0001) {
             const dt = Math.min(STEP_SECONDS, remaining);
-            const tickFraction = dt / STEP_SECONDS;
-            const response = 1 - Math.pow(0.8, tickFraction);
-            const drag = Math.pow(0.965, tickFraction);
-            const baseSpeed = 330 / (1 + finite(result.radius, 10) / 92) * modeSpeed;
-            result.vx += (clamp(finite(segment.dx), -1, 1) * baseSpeed - result.vx) * response;
-            result.vy += (clamp(finite(segment.dy), -1, 1) * baseSpeed - result.vy) * response;
-            result.vx *= drag;
-            result.vy *= drag;
+            const target = gameplayCore.targetFromInput(segment, result);
+            const movement = gameplayCore.movementStep(result, target, dt, {
+              speedScale: modeSpeed,
+              steerRate: gameplayCore.MOVEMENT.playerSteerRate
+            });
+            result.vx = movement.vx;
+            result.vy = movement.vy;
             result.x = clamp(
-              finite(result.x) + result.vx * dt,
+              movement.x,
               finite(arena.x) + finite(result.radius),
               finite(arena.x) + finite(arena.width) - finite(result.radius)
             );
             result.y = clamp(
-              finite(result.y) + result.vy * dt,
+              movement.y,
               finite(arena.y) + finite(result.radius),
               finite(arena.y) + finite(arena.height) - finite(result.radius)
             );

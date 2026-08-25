@@ -1,7 +1,7 @@
 (function attachSnapshotWire(globalScope) {
   "use strict";
 
-  const VERSION = 2;
+  const VERSION = 3;
   const SNAPSHOT = Object.freeze({
     TICK: 0,
     SERVER_TIME: 1,
@@ -54,14 +54,15 @@
     SPECIAL_COOLDOWN: 12,
     RANK: 13,
     MASS: 14,
-    CELLS: 15,
-    LENGTH: 16
+    COSMETICS: 15,
+    CELLS: 16,
+    LENGTH: 17
   });
   const GROUP_FLAGS = Object.freeze({ HUMAN: 1, CONNECTED: 2, DEAD: 4, ELIMINATED: 8 });
   const CELL = Object.freeze({ ID: 0, X: 1, Y: 2, VX: 3, VY: 4, RADIUS: 5, LENGTH: 6 });
-  const EJECTED = Object.freeze({ ID: 0, X: 1, Y: 2, VX: 3, VY: 4, RADIUS: 5, COLOR: 6, LENGTH: 7 });
+  const EJECTED = Object.freeze({ ID: 0, X: 1, Y: 2, VX: 3, VY: 4, RADIUS: 5, COLOR: 6, OWNER_ID: 7, SPORE: 8, ACCENT: 9, LENGTH: 10 });
   const FOOD = Object.freeze({ ID: 0, X: 1, Y: 2, RADIUS: 3, COLOR: 4, LENGTH: 5 });
-  const VIRUS = Object.freeze({ ID: 0, X: 1, Y: 2, RADIUS: 3, COLOR: 4, SPORE: 5, LENGTH: 6 });
+  const VIRUS = Object.freeze({ ID: 0, X: 1, Y: 2, RADIUS: 3, COLOR: 4, KIND: 5, LENGTH: 6 });
   const DELTA = Object.freeze({ FROM_REVISION: 0, TO_REVISION: 1, ADDED: 2, REMOVED: 3, UPDATED: 4, LENGTH: 5 });
   const RANKING = Object.freeze({
     ID: 0,
@@ -157,6 +158,12 @@
       specialCooldown: value[GROUP.SPECIAL_COOLDOWN],
       rank: value[GROUP.RANK],
       mass: value[GROUP.MASS],
+      cosmetics: {
+        skin: value[GROUP.COSMETICS]?.[0] || "aqua",
+        spore: value[GROUP.COSMETICS]?.[1] || "mint",
+        halo: value[GROUP.COSMETICS]?.[2] || "none",
+        trail: value[GROUP.COSMETICS]?.[3] || "none"
+      },
       cells: list(value[GROUP.CELLS], decodeCell)
     };
   }
@@ -169,7 +176,10 @@
       vx: value[EJECTED.VX],
       vy: value[EJECTED.VY],
       radius: value[EJECTED.RADIUS],
-      color: value[EJECTED.COLOR]
+      color: value[EJECTED.COLOR],
+      ownerId: value[EJECTED.OWNER_ID],
+      spore: value[EJECTED.SPORE],
+      accent: value[EJECTED.ACCENT]
     };
   }
 
@@ -190,7 +200,8 @@
       y: value[VIRUS.Y],
       radius: value[VIRUS.RADIUS],
       color: value[VIRUS.COLOR],
-      spore: Boolean(value[VIRUS.SPORE])
+      kind: value[VIRUS.KIND] || "small",
+      spore: value[VIRUS.KIND] === "spore"
     };
   }
 

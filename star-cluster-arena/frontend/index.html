@@ -70,8 +70,89 @@
     </nav>
   </div>
 
+  <main class="title-screen" id="titleScreen" aria-label="游戏主菜单">
+    <div class="title-shell">
+      <aside class="title-rail">
+        <div class="title-brand">
+          <span class="title-kicker">STAR CLUSTER ARENA</span>
+          <h1>星团<br>大作战</h1>
+          <p>吞噬 · 分裂 · 制霸星域</p>
+        </div>
+        <nav class="title-nav" aria-label="主菜单">
+          <button class="title-action primary" id="titleSingleBtn" type="button"><span>单人游戏</span><small>10 种完整模式</small></button>
+          <button class="title-action online" id="titleOnlineBtn" type="button"><span>局域网联机</span><small>创建或加入房间</small></button>
+          <button class="title-action" id="titleProfileBtn" type="button"><span>个人中心</span><small>外观、成长、商店与锻造</small></button>
+          <button class="title-action" type="button" data-title-open="settings"><span>设置</span><small>画面与网络</small></button>
+          <button class="title-action" type="button" data-title-open="controls"><span>操作方式</span><small>键鼠与触屏</small></button>
+          <button class="title-action" type="button" data-title-open="about"><span>关于</span><small>开源与反馈</small></button>
+          <button class="title-action desktop-only" id="titleQuitBtn" type="button"><span>退出游戏</span><small>关闭桌面版</small></button>
+        </nav>
+      </aside>
+
+      <section class="title-content">
+        <div class="title-panel active" data-title-panel="home">
+          <div class="hero-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
+          <span class="hero-label">v3.6 · CANONICAL EDITION</span>
+          <h2>从同一个世界<br>开始每一场战斗</h2>
+          <p>单人和联机共用模式目录、操作语义、外观资源和显示设置。联机房间会按模式目标人数自动补齐 AI。</p>
+          <div class="hero-chips" aria-label="版本特性">
+            <span>最高 240 FPS</span><span>100 人大逃杀</span><span>局域网房间</span><span>硬件加速</span>
+          </div>
+          <button class="hero-start" id="heroStartBtn" type="button">进入单人大厅 <b>→</b></button>
+        </div>
+
+        <div class="title-panel" data-title-panel="settings" hidden>
+          <header class="title-panel-head"><div><span>OPTIONS</span><h2>游戏设置</h2></div><button type="button" data-title-back>返回</button></header>
+          <form class="settings-grid" id="gameSettingsForm">
+            <label><span>显示模式<small>桌面版支持窗口化与无边框全屏</small></span><select name="displayMode"><option value="windowed">窗口化</option><option value="borderless-fullscreen">无边框全屏</option></select></label>
+            <label><span>窗口尺寸<small>仅窗口化时应用</small></span><select name="windowSize"><option value="current">保持当前尺寸</option><option value="1280x720">1280 × 720</option><option value="1440x900">1440 × 900</option><option value="1600x900">1600 × 900</option><option value="1920x1080">1920 × 1080</option></select></label>
+            <label><span>图形帧率<small>自动会匹配桌面显示器刷新率</small></span><select name="frameRate"><option value="auto">自动</option><option value="60">60 FPS</option><option value="90">90 FPS</option><option value="120">120 FPS</option><option value="144">144 FPS</option><option value="165">165 FPS</option><option value="240">240 FPS</option></select></label>
+            <label><span>画质<small>控制像素密度，不改变玩法</small></span><select name="quality"><option value="auto">自动</option><option value="performance">性能</option><option value="balanced">均衡</option><option value="high">高</option></select></label>
+            <label><span>联机缓冲<small>低延迟更灵敏，稳定档更抗抖动</small></span><select name="networkBuffer"><option value="low">低延迟</option><option value="balanced">均衡</option><option value="stable">稳定</option></select></label>
+            <label class="toggle-row"><span>显示性能信息<small>显示图形 FPS、渲染器和权威 Hz</small></span><input type="checkbox" name="showPerformance"></label>
+            <label class="toggle-row"><span>屏幕震动<small>关闭后仍保留击中反馈</small></span><input type="checkbox" name="screenShake"></label>
+            <div class="settings-note" id="displayRefreshNote">正在检测显示器刷新率…</div>
+            <div class="settings-actions"><button type="button" data-title-back>取消</button><button class="save" type="submit">保存并应用</button></div>
+          </form>
+        </div>
+
+        <div class="title-panel" data-title-panel="controls" hidden>
+          <header class="title-panel-head"><div><span>HOW TO PLAY</span><h2>操作方式</h2></div><button type="button" data-title-back>返回</button></header>
+          <div class="control-guide">
+            <article><kbd>鼠标</kbd><div><strong>移动</strong><p>指针相对屏幕中心的方向决定移动方向。</p></div></article>
+            <article><kbd>Space</kbd><div><strong>分裂</strong><p>向指针方向弹射分身，可追击或逃生。</p></div></article>
+            <article><kbd>W</kbd><div><strong>吐球</strong><p>按住连续吐出孢子，为队友补给或推动刺球。</p></div></article>
+            <article><kbd>A</kbd><div><strong>快速合体</strong><p>在支持的模式中触发快速合球。</p></div></article>
+            <article><kbd>D</kbd><div><strong>模式技能</strong><p>在霸屏等模式中释放专属技能。</p></div></article>
+            <article><kbd>P / Esc</kbd><div><strong>暂停 / 返回</strong><p>单人对局可暂停；Esc 逐级返回菜单。</p></div></article>
+          </div>
+        </div>
+
+        <div class="title-panel" data-title-panel="about" hidden>
+          <header class="title-panel-head"><div><span>ABOUT</span><h2>关于游戏</h2></div><button type="button" data-title-back>返回</button></header>
+          <div class="about-card">
+            <strong>星团大作战 v3.6</strong>
+            <p>这是一个开源的浏览器与 Windows 桌面吞噬竞技游戏。前后端源码、桌面封装配置和测试脚本放在同一个工程中，单 HTML 版保持独立。</p>
+            <div class="about-links">
+              <a data-external href="https://github.com/wangzifan396-wzf/mini-browser-games" target="_blank" rel="noreferrer">GitHub 开源项目 <span>↗</span></a>
+              <a data-external href="https://github.com/wangzifan396-wzf" target="_blank" rel="noreferrer">GitHub 作者主页 <span>↗</span></a>
+              <a data-external href="https://github.com/wangzifan396-wzf/mini-browser-games/issues" target="_blank" rel="noreferrer">GitHub 问题反馈 <span>↗</span></a>
+              <button type="button" data-copy-text="530142376">QQ：530142376 <span>复制</span></button>
+              <a data-external href="https://blog.csdn.net/m0_74023007" target="_blank" rel="noreferrer">CSDN <span>↗</span></a>
+              <a data-external href="https://www.xiaoheihe.cn/community/45509815" target="_blank" rel="noreferrer">小黑盒 <span>↗</span></a>
+              <a data-external href="https://space.bilibili.com/319363325" target="_blank" rel="noreferrer">哔哩哔哩 <span>↗</span></a>
+            </div>
+            <small>MIT License · 点击链接会使用系统默认浏览器打开</small>
+          </div>
+        </div>
+      </section>
+    </div>
+    <footer class="title-footer"><span id="titleRuntimeStatus">正在准备游戏内核…</span><button id="titleFullscreenBtn" type="button">全屏</button></footer>
+  </main>
+
   <div class="overlay" id="overlay">
     <div class="dialog">
+      <button class="lobby-back" id="lobbyBackBtn" type="button">← 返回主菜单</button>
       <h2 id="resultTitle">本轮结束</h2>
       <div class="final-mass" id="finalMass">0</div>
       <p id="resultText">再来一局。</p>
@@ -168,6 +249,10 @@
     </div>
   </div>
 
+<script src="./js/game-settings.js" defer></script>
+<script src="./js/cosmetic-catalog.js" defer></script>
+<script src="./js/game-mode-catalog.js" defer></script>
+<script src="./js/gameplay-core.js" defer></script>
 <script src="./js/gpu-renderer.js" defer></script>
 <script src="./js/game.js" defer></script>
 </body>
