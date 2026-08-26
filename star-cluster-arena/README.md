@@ -1,10 +1,20 @@
 # Star Cluster Arena（星团大作战）
 
-> 当前开发版本：`v3.7.0-beta.2`。联机功能处于测试阶段；食点生成、移动、碰刺/孢子和喂刺规则已使用共享内核，AI、完整随机事件与安全区阶段仍在逐项迁移。稳定成品仍保留在 `star-cluster-arena-desktop/v3.6.0/`。
+> 当前正式版为 `v4.0.0`。联机服务器直接执行 `frontend/js/game.js` 的单机十模式玩法源码，单机与联机也共用皮肤、光环和拖尾渲染模块；Windows 安装版和便携版通过 GitHub Release 提供。
 
 一个支持单机、局域网联机和 Windows 桌面封装的吞噬竞技游戏。原有 10 种单机玩法保持不变；局域网版同样开放全部 10 种玩法，支持 2–8 名真人、按单机模式目标人数自动补 AI、房间内改模式、准备、断线重连和服务端权威同步。
 
 项目位于 [wangzifan396-wzf/mini-browser-games](https://github.com/wangzifan396-wzf/mini-browser-games) 仓库的 `star-cluster-arena/` 目录。
+
+## 三种版本形态
+
+| 形态 | 位置 | 用途 |
+|---|---|---|
+| 单 HTML 版 | 仓库根目录 `ball-arena.html` | 无需安装，直接用浏览器打开；保持独立单文件，不包含局域网房间服务 |
+| 前后端源码版 | `star-cluster-arena/` | 包含网页前端、Node.js 房间服务、局域网发现、测试和桌面封装配置，适合开发和自行部署 |
+| Windows 封装版 | GitHub Release 的安装程序与便携 ZIP | 将同一套前后端代码和房主服务封装为普通桌面游戏，玩家无需安装 Node.js |
+
+Windows 封装版不是第三套玩法代码：它复用前后端版，创建房间的电脑会在游戏内部启动服务器。安装版可以选择安装目录并创建快捷方式；便携版完整解压后双击 `StarClusterArena.exe`。
 
 ## 从源码启动网页版
 
@@ -28,9 +38,34 @@ npm.cmd start
 - 如果大厅显示“防火墙阻止”，请点击“打开防火墙设置”，删除旧的阻止规则或允许当前版本使用专用网络。程序不会静默修改系统规则。
 - 路由器开启 AP/客户端隔离、双方不在同一子网或 Windows 网络被设为“公用”时，纯局域网发现仍可能被系统阻止。
 
-详细流程与验收标准见 [`docs/SDD-LAN-STABILITY-V3.1.md`](docs/SDD-LAN-STABILITY-V3.1.md)、[`docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md`](docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md)、[`docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md`](docs/SDD-SHARED-GAMEPLAY-PERFORMANCE-V3.3.md)、[`docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md`](docs/SDD-PERFORMANCE-VALIDATION-V3.3.1.md)、[`docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md`](docs/SDD-CANONICAL-MULTIPLAYER-PARITY-V3.4.md)、[`docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md`](docs/SDD-UNIFIED-GAME-SHELL-LAN-V3.5.md) 和 [`docs/SDD-PLAYABILITY-PARITY-BETA-V3.7.md`](docs/SDD-PLAYABILITY-PARITY-BETA-V3.7.md)。
+v3.8 的纠偏过程记录在 [`docs/SDD-CANONICAL-ENGINE-REBUILD-V3.8.md`](docs/SDD-CANONICAL-ENGINE-REBUILD-V3.8.md)，v4.0 正式发布内容见 [`docs/RELEASE-NOTES-V4.0.0.md`](docs/RELEASE-NOTES-V4.0.0.md)。
 
-### v3.7.0-beta.2 显示与联机资源节奏修复
+### v4.0 正式版：单机玩法同源联机
+
+- 联机权威服务器直接运行单机 `game.js` 的十模式规则，不再维护第二套简化玩法；
+- 2～8 名真人替换对应单机参与者槽位，其余人数由原单机 AI 补齐，大逃杀保持 100 人、闪电保持 88 人；
+- 完整保留随机事件、安全区、魔王碰刺、普通刺与孢子刺、团队协作、据点、霸屏技能和局外外观；
+- 单机和联机共用 `cosmetic-renderer.js`，统一特殊皮肤、光环与拖尾材质；
+- 页面首屏固定为深色，并在主页与联机大厅之间使用深色导航遮罩，避免 WebView 默认白底闪现；
+- 物理固定 60Hz、网络快照 20Hz、画面按显示器和设置独立绘制到最高 240 FPS；
+- 提供局域网自动发现、房间码加入、准备、断线重连、房主退出和十模式自动补 AI；
+- Windows 安装程序支持选择安装位置，便携 ZIP 内包含可直接双击的完整游戏程序。
+
+### v3.8 纠偏开发版（历史）
+
+- 服务器生产入口直接加载与单机页面相同的 `frontend/js/game.js`，不再导入 `simulation-v2.mjs` 的独立 AI、碰撞、事件和模式判定；
+- 单机和服务器均以固定 60 Hz 推进同一玩法源码，联机以 20 Hz 发送紧凑快照，客户端按显示设置独立绘制到最高 240 FPS；
+- 两到八名真人替换单机参与者槽位，其余人数继续由单机 AI 补足；断线时同一槽位由单机 AI 接管；
+- 完整 23 个随机事件、多阶段安全区、魔王/魔兵 AI、普通刺/孢子刺、团队协作、据点、霸屏快合和冲刺种刺都从单机函数执行；
+- 单机与服务器共同使用刺球空间网格筛选吐球/孢子碰撞，修复孢子数量增长后逐一扫描全部刺球造成的长局卡顿；
+- 联机补回字符串食点颜色、模式目标和小地图；外观仍通过同一目录随玩家进入房间；
+- 小黑盒无效网页链接改为复制 `45509815`，避免继续打开 404；
+- WebGL 上下文丢失时隐藏失效层并用深色 Canvas 兜底；桌面逐帧监测近白画面并记录 GPU/renderer 异常；
+- `multiplayer.js` 的场景绘制仍待抽成和单机共用的 `ArenaRenderer`，完成前不发布正式版。
+
+本轮自动化记录：全量测试 `159 / 159`；十模式各 1200 个权威帧的物理 p95 为 `4.287～10.139 ms`；窗口化与无边框全屏各完成 5 分钟逐帧白屏监测，合计 18022 个合成样本中可疑白帧为 0。实体双机逐模式手感验收仍是发布前置条件。
+
+### v3.7.0-beta.2 历史测试版：显示与联机资源节奏修复
 
 - 修复沙箱模式下桌面预加载脚本无法执行的问题；首页全屏、设置全屏、退出、复制和外部链接重新接通 Electron 主进程；
 - 全屏测试改为真实点击首页按钮和设置表单，分别验证进入/退出，不再用直接调用底层接口代替 UI 测试；
@@ -48,7 +83,7 @@ npm.cmd start
 - 移动中的刺球通过权威增量更新并在客户端插值，不需要等待下一次完整世界基线。
 - 主菜单新增个人中心，可直接管理外观、商店、锻造与成长；装备同时带入单人和联机。
 - 设置新增窗口化与无边框全屏、窗口尺寸；F11、首页按钮与设置读取同一桌面窗口状态。
-- 关于页新增 QQ、CSDN、小黑盒和哔哩哔哩，桌面版使用严格白名单在系统浏览器中打开并显示成功/失败反馈。
+- 关于页提供 QQ、小黑盒 ID 复制，以及 GitHub、CSDN、哔哩哔哩有效网址；桌面版只允许白名单网址在系统浏览器中打开并显示成功/失败反馈。
 - 联机大厅、等待房间和对局支持 Escape 返回；房主退出前会明确提示房间将关闭。
 - Windows 安装器改为 NSIS 引导式安装，可选择安装目录；仍同时提供便携版 ZIP。
 - 协议升级为 `sca-lan-v6`，避免旧服务端与缺少喂刺同步的客户端静默混房。
@@ -86,10 +121,10 @@ npm.cmd run desktop
 npm.cmd run make:desktop
 ```
 
-每个版本输出到独立目录。本次测试成品位于仓库顶层的 `star-cluster-arena-desktop/v3.7.0-beta.2/`，`v3.6.0/` 继续作为稳定版保留，其中：
+每个版本输出到独立目录。本次正式成品位于仓库顶层的 `star-cluster-arena-desktop/v4.0.0/`，其中：
 
-- `星团大作战-安装程序-3.7.0-beta.2-win-x64.exe`：引导式安装，可选择安装位置，安装后从桌面或开始菜单启动游戏。
-- `星团大作战-便携版-3.7.0-beta.2-win-x64.zip`：解压后双击目录内的 `StarClusterArena.exe`，不能只把 EXE 单独拷走。
+- `星团大作战-安装程序-4.0.0-win-x64.exe`：引导式安装，可选择安装位置，安装后从桌面或开始菜单启动游戏。
+- `星团大作战-便携版-4.0.0-win-x64.zip`：解压后双击目录内的 `StarClusterArena.exe`，不能只把 EXE 单独拷走。
 - `SHA256SUMS.txt`：安装版和便携版的 SHA-256 校验值。
 
 源码检查与测试：
@@ -99,6 +134,7 @@ npm.cmd run check
 npm.cmd test
 npm.cmd run test:soak
 npm.cmd run test:desktop-display
+npm.cmd run test:desktop-navigation
 npm.cmd run test:desktop-perf
 npm.cmd run test:desktop-multiplayer-perf
 ```
@@ -107,14 +143,17 @@ npm.cmd run test:desktop-multiplayer-perf
 
 ```text
 backend/server.mjs                 HTTP/API/WebSocket 服务入口
-backend/multiplayer/               房间、协议、权威模拟、局域网发现
+backend/multiplayer/               房间、协议、单机源码权威适配、局域网发现
+backend/multiplayer/canonical-single-runtime.mjs 服务器直接执行单机玩法源码的过渡适配器
 frontend/index.html                单机游戏首页
 frontend/multiplayer.html          联机大厅和联机对局界面
-frontend/js/game.js                原有单机游戏逻辑
+frontend/js/game.js                单机页面与服务器共同执行的十模式玩法源码
 frontend/js/game-settings.js       单人和联机共用的帧率、画质与缓冲设置
 frontend/js/game-mode-catalog.js   单机与联机共用的十模式基础定义
 frontend/js/gameplay-core.js       单机、服务端与预测器共用的移动/分裂规则
 frontend/js/cosmetic-catalog.js    单机与联机共用的皮肤、孢子、光环和拖尾目录
+frontend/js/cosmetic-renderer.js   单机与联机共用的皮肤、光环和拖尾绘制
+frontend/js/page-transition.js     深色页面导航遮罩，避免整页切换白闪
 frontend/js/multiplayer.js         联机客户端、房间交互和输入同步
 frontend/js/snapshot-*.js          紧凑快照解码、历史缓冲和自适应插值
 frontend/js/local-predictor.js     本地移动预测和未确认输入重放

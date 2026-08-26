@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#061015">
+<meta name="color-scheme" content="dark">
+<style>html,body{margin:0;min-height:100%;background:#061015;color-scheme:dark}</style>
 <meta name="description" content="使用 WebGL 硬件加速的星团大作战网页版游戏">
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
 <title>星团大作战</title>
@@ -80,7 +82,7 @@
         </div>
         <nav class="title-nav" aria-label="主菜单">
           <button class="title-action primary" id="titleSingleBtn" type="button"><span>单人游戏</span><small>10 种完整模式</small></button>
-          <button class="title-action online" id="titleOnlineBtn" type="button"><span>局域网联机 <em class="beta-inline">测试</em></span><small>创建或加入房间</small></button>
+          <button class="title-action online" id="titleOnlineBtn" type="button"><span>局域网联机 <em class="beta-inline">正式</em></span><small>创建或加入房间</small></button>
           <button class="title-action" id="titleProfileBtn" type="button"><span>个人中心</span><small>外观、成长、商店与锻造</small></button>
           <button class="title-action" type="button" data-title-open="settings"><span>设置</span><small>画面与网络</small></button>
           <button class="title-action" type="button" data-title-open="controls"><span>操作方式</span><small>键鼠与触屏</small></button>
@@ -92,9 +94,9 @@
       <section class="title-content">
         <div class="title-panel active" data-title-panel="home">
           <div class="hero-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
-          <span class="hero-label">v3.7.0-beta.2 · PLAYABILITY UPDATE</span>
+          <span class="hero-label">v4.0.0 · CANONICAL MULTIPLAYER</span>
           <h2>从同一个世界<br>开始每一场战斗</h2>
-          <p>单人模式保持已调校玩法；联机测试版正在逐项迁移同一套规则，并按模式目标人数自动补齐 AI。</p>
+          <p>单人与联机直接执行同一份十模式玩法源码，真人替换对应参与者槽位，其余人数由原单机 AI 自动补齐。</p>
           <div class="hero-chips" aria-label="版本特性">
             <span>最高 240 FPS</span><span>100 人大逃杀</span><span>局域网房间</span><span>硬件加速</span>
           </div>
@@ -131,7 +133,7 @@
         <div class="title-panel" data-title-panel="about" hidden>
           <header class="title-panel-head"><div><span>ABOUT</span><h2>关于游戏</h2></div><button type="button" data-title-back>返回</button></header>
           <div class="about-card">
-            <strong>星团大作战 v3.7.0-beta.2</strong>
+            <strong>星团大作战 v4.0.0</strong>
             <p>这是一个开源的浏览器与 Windows 桌面吞噬竞技游戏。前后端源码、桌面封装配置和测试脚本放在同一个工程中，单 HTML 版保持独立。</p>
             <div class="about-links">
               <a data-external href="https://github.com/wangzifan396-wzf/mini-browser-games" target="_blank" rel="noreferrer">GitHub 开源项目 <span>↗</span></a>
@@ -139,7 +141,7 @@
               <a data-external href="https://github.com/wangzifan396-wzf/mini-browser-games/issues" target="_blank" rel="noreferrer">GitHub 问题反馈 <span>↗</span></a>
               <button type="button" data-copy-text="530142376">QQ：530142376 <span>复制</span></button>
               <a data-external href="https://blog.csdn.net/m0_74023007" target="_blank" rel="noreferrer">CSDN <span>↗</span></a>
-              <a data-external href="https://www.xiaoheihe.cn/community/45509815" target="_blank" rel="noreferrer">小黑盒 <span>↗</span></a>
+              <button type="button" data-copy-text="45509815">小黑盒 ID：45509815 <span>复制</span></button>
               <a data-external href="https://space.bilibili.com/319363325" target="_blank" rel="noreferrer">哔哩哔哩 <span>↗</span></a>
             </div>
             <small>MIT License · 点击链接会使用系统默认浏览器打开</small>
@@ -250,8 +252,11 @@
   </div>
 
 <script src="./js/game-settings.js" defer></script>
+<script src="./js/page-transition.js" defer></script>
 <script src="./js/cosmetic-catalog.js" defer></script>
+<script src="./js/cosmetic-renderer.js" defer></script>
 <script src="./js/game-mode-catalog.js" defer></script>
+<script src="./js/canonical-game-content.js" defer></script>
 <script src="./js/gameplay-core.js" defer></script>
 <script src="./js/gpu-renderer.js" defer></script>
 <script src="./js/game.js" defer></script>

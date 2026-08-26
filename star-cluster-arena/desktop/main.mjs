@@ -14,12 +14,17 @@ const SMOKE_MODE = process.env.SCA_DESKTOP_SMOKE === "1";
 const SMOKE_MULTIPLAYER = process.env.SCA_DESKTOP_SMOKE_PATH === "multiplayer";
 const SMOKE_GAMEPLAY = process.env.SCA_DESKTOP_SMOKE_GAMEPLAY === "1";
 const SMOKE_DISPLAY = process.env.SCA_DESKTOP_SMOKE_DISPLAY === "1";
+const SMOKE_VISUAL = process.env.SCA_DESKTOP_SMOKE_VISUAL === "1";
+const SMOKE_NAVIGATION = process.env.SCA_DESKTOP_SMOKE_NAVIGATION === "1";
+const SMOKE_VISUAL_DISPLAY_MODE = process.env.SCA_DESKTOP_SMOKE_VISUAL_DISPLAY_MODE === "borderless-fullscreen"
+  ? "borderless-fullscreen"
+  : "windowed";
 const SMOKE_GAMEPLAY_MODE = ["solo", "team", "survival", "battle", "blitz", "spore", "screen", "control", "giant", "demon"].includes(process.env.SCA_DESKTOP_SMOKE_GAMEPLAY_MODE)
   ? process.env.SCA_DESKTOP_SMOKE_GAMEPLAY_MODE
   : "solo";
 const SMOKE_MIN_FPS = Math.max(0, Number(process.env.SCA_DESKTOP_SMOKE_MIN_FPS) || 0);
 const SMOKE_LOW_POWER_GPU = SMOKE_GAMEPLAY && process.env.SCA_DESKTOP_SMOKE_LOW_POWER_GPU === "1";
-const SMOKE_GAMEPLAY_DURATION = Math.min(60, Math.max(8, Math.round(Number(process.env.SCA_DESKTOP_SMOKE_DURATION) || 16)));
+const SMOKE_GAMEPLAY_DURATION = Math.min(SMOKE_VISUAL ? 300 : 60, Math.max(8, Math.round(Number(process.env.SCA_DESKTOP_SMOKE_DURATION) || 16)));
 let mainWindow = null;
 let serverController = null;
 let stopping = false;
@@ -55,6 +60,103 @@ const logger = {
   warn: (...values) => void writeLog("warn", values),
   error: (...values) => void writeLog("error", values)
 };
+
+app.on("child-process-gone", (_event, details) => {
+  const type = details?.type || "unknown";
+  const reason = details?.reason || "unknown";
+  const code = details?.exitCode ?? "unknown";
+  logger.error(`Electron 子进程异常退出：type=${type} reason=${reason} exitCode=${code}`);
+});
+
+function startVisualFrameMonitor(window) {
+  const stats = {
+    samples: 0,
+    maximumWhiteRatio: 0,
+    maximumMeanChannel: 0,
+    suspiciousFrames: []
+  };
+  const startedAt = Date.now();
+  const onFrame = image => {
+    if (!image || image.isEmpty()) return;
+    const bitmap = image.resize({ width: 64, height: 36, quality: "good" }).toBitmap();
+    if (!bitmap?.length) return;
+    let white = 0;
+    let channels = 0;
+    for (let index = 0; index + 2 < bitmap.length; index += 4) {
+      const first = bitmap[index];
+      const second = bitmap[index + 1];
+      const third = bitmap[index + 2];
+      channels += first + second + third;
+      if (first >= 235 && second >= 235 && third >= 235) white += 1;
+    }
+    const pixels = Math.max(1, Math.floor(bitmap.length / 4));
+    const whiteRatio = white / pixels;
+    const meanChannel = channels / (pixels * 3);
+    stats.samples += 1;
+    stats.maximumWhiteRatio = Math.max(stats.maximumWhiteRatio, whiteRatio);
+    stats.maximumMeanChannel = Math.max(stats.maximumMeanChannel, meanChannel);
+    if (whiteRatio >= 0.72 || meanChannel >= 220) {
+      stats.suspiciousFrames.push({
+        elapsedMs: Date.now() - startedAt,
+        whiteRatio: Number(whiteRatio.toFixed(4)),
+        meanChannel: Number(meanChannel.toFixed(1))
+      });
+      if (stats.suspiciousFrames.length > 24) stats.suspiciousFrames.shift();
+    }
+  };
+  window.webContents.beginFrameSubscription(false, onFrame);
+  return () => {
+    window.webContents.endFrameSubscription();
+    return {
+      ...stats,
+      maximumWhiteRatio: Number(stats.maximumWhiteRatio.toFixed(4)),
+      maximumMeanChannel: Number(stats.maximumMeanChannel.toFixed(1))
+    };
+  };
+}
+
+function waitForMainFrameLoad(window, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      window.webContents.removeListener("did-finish-load", loaded);
+    };
+    const loaded = () => {
+      cleanup();
+      resolve();
+    };
+    timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("页面导航超时"));
+    }, timeoutMs);
+    window.webContents.once("did-finish-load", loaded);
+  });
+}
+
+async function collectNavigationSmoke(window) {
+  const routes = [await window.webContents.executeJavaScript("location.pathname")];
+  for (let cycle = 0; cycle < 4; cycle++) {
+    const enteredLobby = waitForMainFrameLoad(window);
+    await window.webContents.executeJavaScript("document.getElementById('titleOnlineBtn').click()")
+    await enteredLobby;
+    routes.push(await window.webContents.executeJavaScript("location.pathname"));
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 140));
+
+    const returnedHome = waitForMainFrameLoad(window);
+    await window.webContents.executeJavaScript("document.querySelector('.back-link').click()")
+    await returnedHome;
+    routes.push(await window.webContents.executeJavaScript("location.pathname"));
+    await window.webContents.executeJavaScript(`(() => {
+      document.querySelector('[data-title-open="settings"]').click();
+      document.querySelector('[data-title-back]').click();
+      document.querySelector('[data-title-open="settings"]').click();
+      document.querySelector('[data-title-back]').click();
+    })()`);
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 140));
+  }
+  return { cycles: 4, routes };
+}
 
 function isLocalGameUrl(target) {
   if (!serverController) return false;
@@ -444,13 +546,32 @@ async function createMainWindow() {
     mainWindow.webContents.once("did-finish-load", () => {
       setTimeout(async () => {
         try {
-          const gameplay = SMOKE_GAMEPLAY
-            ? (SMOKE_MULTIPLAYER ? await collectMultiplayerGameplaySmoke(smokeWindow) : await collectGameplaySmoke(smokeWindow))
-            : null;
+          if (SMOKE_VISUAL) {
+            await smokeWindow.webContents.executeJavaScript(`(() => {
+              const current = window.ScaGameSettings?.load?.() || {};
+              window.ScaGameSettings?.save?.({ ...current, displayMode: ${JSON.stringify(SMOKE_VISUAL_DISPLAY_MODE)}, windowSize: 'current' });
+            })()`);
+            await setDesktopDisplayMode({ mode: SMOKE_VISUAL_DISPLAY_MODE, windowSize: "current" });
+            await new Promise(resolveDelay => setTimeout(resolveDelay, 250));
+          }
+          const stopVisualMonitor = SMOKE_VISUAL || SMOKE_NAVIGATION ? startVisualFrameMonitor(smokeWindow) : null;
+          let gameplay = null;
+          let visual = null;
+          let navigation = null;
+          try {
+            navigation = SMOKE_NAVIGATION ? await collectNavigationSmoke(smokeWindow) : null;
+            gameplay = SMOKE_GAMEPLAY
+              ? (SMOKE_MULTIPLAYER ? await collectMultiplayerGameplaySmoke(smokeWindow) : await collectGameplaySmoke(smokeWindow))
+              : null;
+          } finally {
+            visual = stopVisualMonitor?.() || null;
+          }
           const display = SMOKE_DISPLAY ? await collectDisplayInteractionSmoke(smokeWindow) : null;
           const state = await smokeWindow.webContents.executeJavaScript(`({ title: document.title, connection: document.getElementById("connectionText")?.textContent || "", warning: document.getElementById("networkWarning")?.hidden === false, renderer: document.getElementById("renderBadge")?.title || "", refresh: new URLSearchParams(location.search).get("refresh"), desktopApi: Boolean(window.starClusterDesktop?.desktop) })`);
           state.gameplay = gameplay;
           state.display = display;
+          state.visual = visual;
+          state.navigation = navigation;
           if (SMOKE_MULTIPLAYER && !SMOKE_GAMEPLAY && state.connection !== "联机服务正常") throw new Error(`联机大厅状态异常：${state.connection}`);
           if (display && (
             !display.buttonEntered?.native?.fullscreen
@@ -472,13 +593,16 @@ async function createMainWindow() {
           }
           if (gameplay && gameplay.samples.filter(sample => !sample.over).length < 2) throw new Error(`性能采样缺少有效对局帧：${gameplay.mode}`);
           if (gameplay && gameplay.samples.some(sample => Number.isFinite(sample.backingStoreResizes) && sample.backingStoreResizes !== 0)) {
-            throw new Error(`固定窗口对局期间发生 Canvas 后备缓冲重建：${JSON.stringify(gameplay.samples)}`);
+            throw new Error(`固定窗口对局期间发生 Canvas 后备缓冲重建：${JSON.stringify({ samples: gameplay.samples, visual })}`);
           }
           if (gameplay && SMOKE_MULTIPLAYER && gameplay.samples.some(sample => sample.world && (sample.world.width !== 7600 || sample.world.height !== 7600))) {
             throw new Error(`联机世界尺寸回退：${JSON.stringify(gameplay.samples)}`);
           }
           if (gameplay && SMOKE_MIN_FPS > 0 && gameplay.summary.steadyAverageFps < SMOKE_MIN_FPS) {
             throw new Error(`性能采样低于门槛：${gameplay.summary.steadyAverageFps} < ${SMOKE_MIN_FPS} FPS`);
+          }
+          if (visual?.suspiciousFrames?.length) {
+            throw new Error(`检测到疑似白屏合成帧：${JSON.stringify(visual)}`);
           }
           logger.info(`DESKTOP_SMOKE_OK ${JSON.stringify(state)}`);
         } catch (error) {

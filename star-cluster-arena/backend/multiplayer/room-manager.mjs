@@ -487,8 +487,15 @@ export class RoomManager extends EventEmitter {
       loop.accumulator -= STEP_MS;
       if (Math.abs(loop.accumulator) < timingEpsilon) loop.accumulator = 0;
       loop.simulationTime += STEP_MS;
-      room.simulation.step(loop.simulationTime);
-      this.broadcastSnapshot(room);
+      try {
+        room.simulation.step(loop.simulationTime);
+      } catch (error) {
+        this.logger.error?.(`Room ${room.code} canonical simulation failed`, error);
+        room.simulation.finishMatch("server-simulation-error");
+        this.broadcast(room, "error", { code: "simulation-failed", message: "本局模拟异常，房间将返回大厅" });
+      }
+      const snapshotInterval = SIMULATION_CONSTANTS.NETWORK_SNAPSHOT_INTERVAL_TICKS || 1;
+      if (room.simulation.tick % snapshotInterval === 0 || room.simulation.finished) this.broadcastSnapshot(room);
       steps += 1;
     }
 

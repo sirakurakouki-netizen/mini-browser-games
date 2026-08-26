@@ -1,7 +1,7 @@
 {
   "name": "star-cluster-arena",
   "productName": "星团大作战",
-  "version": "3.7.0-beta.2",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
   "main": "desktop/main.mjs",
@@ -30,6 +30,7 @@
     "test:lan-harness": "node scripts/dual-lan-harness.mjs",
     "test:soak": "node scripts/multiplayer-soak.mjs",
     "test:desktop-display": "node scripts/desktop-display-smoke.mjs",
+    "test:desktop-navigation": "node scripts/desktop-navigation-smoke.mjs",
     "test:desktop-perf": "node scripts/desktop-performance-smoke.mjs",
     "test:desktop-multiplayer-perf": "node scripts/desktop-multiplayer-performance-smoke.mjs",
     "desktop": "electron-forge start",

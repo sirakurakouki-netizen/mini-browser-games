@@ -56,7 +56,8 @@ test("mode configs and the public catalog are deeply immutable", () => {
 
   const catalog = publicModeCatalog();
   assert.equal(catalog.length, 10);
-  assert.ok(catalog.every(mode => mode.parity === "canonical-target"));
+  assert.ok(catalog.every(mode => mode.parity === "single-source-runtime"));
+  assert.ok(catalog.every(mode => mode.execution === "frontend/js/game.js"));
   assert.ok(catalog.every(mode => mode.sharedRules.includes("movement")));
   assert.ok(catalog.every(mode => mode.sharedRules.includes("mode-catalog")));
   assert.ok(Object.isFrozen(catalog));

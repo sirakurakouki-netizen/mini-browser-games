@@ -1,7 +1,6 @@
 export const EXTERNAL_HTTPS_HOSTS = Object.freeze([
   "github.com",
   "blog.csdn.net",
-  "www.xiaoheihe.cn",
   "space.bilibili.com"
 ]);
 

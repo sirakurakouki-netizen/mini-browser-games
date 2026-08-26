@@ -15,6 +15,9 @@ const requiredFiles = [
   "frontend/index.html",
   "frontend/multiplayer.html",
   "frontend/js/cosmetic-catalog.js",
+  "frontend/js/cosmetic-renderer.js",
+  "frontend/js/page-transition.js",
+  "frontend/js/canonical-game-content.js",
   "frontend/js/gameplay-core.js",
   "frontend/js/game-mode-catalog.js",
   "frontend/js/local-predictor.js",
@@ -22,6 +25,7 @@ const requiredFiles = [
   "frontend/js/snapshot-buffer.js",
   "frontend/js/snapshot-wire.js",
   "backend/multiplayer/modes.mjs",
+  "backend/multiplayer/canonical-single-runtime.mjs",
   "backend/multiplayer/snapshot-wire.mjs",
   "docs/SDD-LAN-MULTIPLAYER-DESKTOP.md",
   "docs/SDD-MULTIPLAYER-MODES-PERFORMANCE-V3.2.md",
@@ -32,7 +36,9 @@ const requiredFiles = [
   "docs/SDD-CANONICAL-GAMEPLAY-DESKTOP-V3.6.md",
   "docs/RELEASE-NOTES-V3.6.0.md",
   "docs/SDD-PLAYABILITY-PARITY-BETA-V3.7.md",
-  "docs/RELEASE-NOTES-V3.7.0-BETA.2.md"
+  "docs/SDD-CANONICAL-ENGINE-REBUILD-V3.8.md",
+  "docs/RELEASE-NOTES-V3.7.0-BETA.2.md",
+  "docs/RELEASE-NOTES-V4.0.0.md"
 ];
 
 async function recurse(relativeDirectory) {
@@ -57,6 +63,11 @@ const sourceFiles = (await Promise.all([
 
 for (const relative of sourceFiles) {
   execFileSync(process.execPath, ["--check", join(projectRoot, relative)], { stdio: "pipe" });
+}
+
+for (const relative of ["backend/server.mjs", "backend/multiplayer/room-manager.mjs", "backend/multiplayer/simulation.mjs"]) {
+  const source = await readFile(join(projectRoot, relative), "utf8");
+  if (source.includes("simulation-v2")) throw new Error(`生产入口禁止重新导入旧联机模拟器：${relative}`);
 }
 
 const htmlFiles = ["frontend/index.html", "frontend/multiplayer.html"];

@@ -23,6 +23,10 @@
 
   const cosmeticCatalog = window.ScaCosmeticCatalog;
   if (!cosmeticCatalog) throw new Error("Shared cosmetic catalog failed to load");
+  const cosmeticRenderer = window.ScaCosmeticRenderer;
+  if (!cosmeticRenderer) throw new Error("Shared cosmetic renderer failed to load");
+  const pageTransition = window.ScaPageTransition;
+  if (!pageTransition) throw new Error("Shared page transition failed to load");
   const gameplayCore = window.ScaGameplayCore;
   if (!gameplayCore) throw new Error("Shared gameplay core failed to load");
   const settingsApi = window.ScaGameSettings;
@@ -72,6 +76,7 @@
     startMatch: document.getElementById("startMatchBtn"),
     roomHint: document.getElementById("roomHint"),
     canvas: document.getElementById("multiplayerCanvas"),
+    miniCanvas: document.getElementById("multiplayerMiniCanvas"),
     mass: document.getElementById("gameMass"),
     rank: document.getElementById("gameRank"),
     kills: document.getElementById("gameKills"),
@@ -101,6 +106,7 @@
   };
 
   const context = elements.canvas.getContext("2d", { alpha: false, desynchronized: true });
+  const miniContext = elements.miniCanvas?.getContext("2d", { alpha: false }) || null;
   const snapshotBuffer = new window.ScaSnapshotBuffer.SnapshotBuffer({
     capacity: 32,
     minimumDelayMs: networkPreset.minimumDelayMs,
@@ -209,7 +215,7 @@
   }
 
   function goToMainMenu() {
-    location.href = mainMenuUrl();
+    pageTransition.navigate(mainMenuUrl());
   }
 
   function closeSessionMenu() {
@@ -1055,6 +1061,24 @@
 
   function drawCosmeticTrail(group, cell, point, radius, now) {
     if (!group.human || radius < 22) return;
+    {
+      const definition = cosmeticCatalog.definition("trail", group.cosmetics?.trail);
+      return cosmeticRenderer.drawTrail({
+        context,
+        definition,
+        x: point.x,
+        y: point.y,
+        radius,
+        worldRadius: cell.radius,
+        vx: cell.vx,
+        vy: cell.vy,
+        now,
+        lineScale: 1,
+        splitCount: group.cells?.length || 1,
+        lowQuality: gameSettings.quality === "performance",
+        baseColor: group.color
+      });
+    }
     const trail = cosmeticCatalog.definition("trail", group.cosmetics?.trail);
     if (!trail?.pattern || trail.key === "none") return;
     const speed = Math.hypot(cell.vx || 0, cell.vy || 0);
@@ -1094,6 +1118,22 @@
 
   function drawCosmeticHalo(group, point, radius, now) {
     if (!group.human || radius < 24) return;
+    {
+      const definition = cosmeticCatalog.definition("halo", group.cosmetics?.halo);
+      return cosmeticRenderer.drawHalo({
+        context,
+        definition,
+        x: point.x,
+        y: point.y,
+        radius,
+        worldRadius: radius / Math.max(0.08, state.camera.zoom),
+        now,
+        lineScale: 1,
+        splitCount: group.cells?.length || 1,
+        lowQuality: gameSettings.quality === "performance",
+        baseColor: group.color
+      });
+    }
     const halo = cosmeticCatalog.definition("halo", group.cosmetics?.halo);
     if (!halo?.pattern || halo.key === "none") return;
     const outer = radius + 9;
@@ -1122,6 +1162,22 @@
 
   function drawCosmeticSkin(group, point, radius, now) {
     if (!group.human || radius < 18) return;
+    {
+      const definition = cosmeticCatalog.definition("skin", group.cosmetics?.skin);
+      return cosmeticRenderer.drawSkin({
+        context,
+        definition,
+        x: point.x,
+        y: point.y,
+        radius,
+        worldRadius: radius / Math.max(0.08, state.camera.zoom),
+        now,
+        lineScale: 1,
+        splitCount: group.cells?.length || 1,
+        lowQuality: gameSettings.quality === "performance",
+        baseColor: group.color
+      });
+    }
     const skin = cosmeticCatalog.definition("skin", group.cosmetics?.skin);
     if (!skin?.pattern) return;
     const spin = now / 1600;
@@ -1231,13 +1287,19 @@
       context.fill();
       context.globalAlpha = 1;
     }
-    const foods = snapshot.foods || [];
-    for (let colorIndex = 0; colorIndex < FOOD_COLORS.length; colorIndex += 1) {
+    const foodBatches = new Map();
+    for (const food of snapshot.foods || []) {
+      if (state.confirmedRemovedFoodIds.has(food.id)) continue;
+      const color = typeof food.color === "number"
+        ? FOOD_COLORS[Math.abs(food.color) % FOOD_COLORS.length]
+        : food.color || FOOD_COLORS[0];
+      if (!foodBatches.has(color)) foodBatches.set(color, []);
+      foodBatches.get(color).push(food);
+    }
+    for (const [color, foods] of foodBatches) {
       context.beginPath();
       let visibleCount = 0;
       for (const food of foods) {
-        if (state.confirmedRemovedFoodIds.has(food.id)) continue;
-        if (food.color % FOOD_COLORS.length !== colorIndex) continue;
         const point = worldToScreen(food.x, food.y);
         const radius = Math.max(2, food.radius * state.camera.zoom);
         if (!visible(point, radius)) continue;
@@ -1246,7 +1308,7 @@
         visibleCount += 1;
       }
       if (visibleCount) {
-        context.fillStyle = FOOD_COLORS[colorIndex];
+        context.fillStyle = color;
         context.fill();
       }
     }
@@ -1309,6 +1371,49 @@
           context.fillText(Math.round(cell.mass), point.x, point.y + clamp(radius * 0.2, 10, 18));
         }
       }
+    }
+  }
+
+  function drawMinimap(snapshot) {
+    if (!miniContext || !elements.miniCanvas || !snapshot.world) return;
+    const width = elements.miniCanvas.width;
+    const height = elements.miniCanvas.height;
+    const scaleX = width / Math.max(1, snapshot.world.width);
+    const scaleY = height / Math.max(1, snapshot.world.height);
+    miniContext.fillStyle = "#061015";
+    miniContext.fillRect(0, 0, width, height);
+    miniContext.strokeStyle = "rgba(88,237,200,0.28)";
+    miniContext.lineWidth = 1;
+    miniContext.strokeRect(0.5, 0.5, width - 1, height - 1);
+    if (snapshot.safeZone) {
+      miniContext.beginPath();
+      miniContext.arc(snapshot.safeZone.x * scaleX, snapshot.safeZone.y * scaleY, snapshot.safeZone.radius * Math.min(scaleX, scaleY), 0, Math.PI * 2);
+      miniContext.fillStyle = "rgba(251,113,133,0.08)";
+      miniContext.fill();
+      miniContext.strokeStyle = "rgba(251,113,133,0.78)";
+      miniContext.stroke();
+    }
+    for (const point of snapshot.controlPoints || []) {
+      miniContext.beginPath();
+      miniContext.arc(point.x * scaleX, point.y * scaleY, 4, 0, Math.PI * 2);
+      miniContext.fillStyle = snapshot.teams?.find(team => team.team === point.owner)?.color || "#f8fbff";
+      miniContext.fill();
+    }
+    for (const group of snapshot.groups || []) {
+      if (group.dead || !group.cells?.length) continue;
+      let mass = 0;
+      let x = 0;
+      let y = 0;
+      for (const cell of group.cells) {
+        const weight = Math.max(1, cell.mass || 1);
+        mass += weight;
+        x += cell.x * weight;
+        y += cell.y * weight;
+      }
+      miniContext.beginPath();
+      miniContext.arc(x / mass * scaleX, y / mass * scaleY, group.id === state.playerId ? 4.2 : clamp(Math.sqrt(Math.max(1, group.mass)) / 15, 1.5, 3.4), 0, Math.PI * 2);
+      miniContext.fillStyle = group.id === state.playerId ? "#ffffff" : group.color;
+      miniContext.fill();
     }
   }
 
@@ -1395,6 +1500,7 @@
         updateCamera(snapshot, elapsed);
         drawBackground(snapshot);
         drawWorld(snapshot, now);
+        drawMinimap(snapshot);
         if (now - state.lastHudAt >= HUD_INTERVAL_MS) {
           state.lastHudAt = now;
           updateHud(snapshot);

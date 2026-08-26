@@ -205,6 +205,9 @@
       this.device = "浏览器默认渲染器";
       this.active = false;
       this.contextLost = false;
+      this.contextLosses = 0;
+      this.contextRestores = 0;
+      this.lastContextLossAt = 0;
       this.locations = {};
       this.pixelRatio = 1;
       this.backgroundBuffer = null;
@@ -221,10 +224,17 @@
       canvas.addEventListener("webglcontextlost", event => {
         event.preventDefault();
         this.contextLost = true;
+        this.contextLosses += 1;
+        this.lastContextLossAt = performance.now();
         this.active = false;
+        // A lost WebGL drawing buffer may briefly expose Chromium's default
+        // compositor surface. Hide it until a dark replacement buffer exists;
+        // the foreground Canvas renderer will paint the complete fallback frame.
+        this.canvas.style.visibility = "hidden";
       });
       canvas.addEventListener("webglcontextrestored", () => {
         this.contextLost = false;
+        this.contextRestores += 1;
         this.setup(this.gl, this.backend === "WebGL2");
       });
 
@@ -292,7 +302,12 @@
           ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
           : gl.getParameter(gl.RENDERER) || "GPU";
         this.device = String(this.device).replace(/\s+/g, " ").trim();
+        gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.SCISSOR_TEST);
+        gl.clearColor(0.024, 0.063, 0.082, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
         this.canvas.hidden = false;
+        this.canvas.style.visibility = "visible";
         this.active = true;
       } catch (error) {
         console.warn("GPU renderer unavailable; Canvas 2D fallback enabled.", error);
@@ -443,7 +458,11 @@
         device: this.device,
         pixelRatio: this.pixelRatio,
         spriteBatching: this.supportsSprites,
-        webgpuAvailable: Boolean(navigator.gpu)
+        webgpuAvailable: Boolean(navigator.gpu),
+        contextLost: this.contextLost,
+        contextLosses: this.contextLosses,
+        contextRestores: this.contextRestores,
+        lastContextLossAt: this.lastContextLossAt
       };
     }
   }

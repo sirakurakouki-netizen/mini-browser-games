@@ -8,7 +8,7 @@ import {
   SNAPSHOT_BACKPRESSURE_LIMIT_BYTES
 } from "../backend/multiplayer/room-manager.mjs";
 import { PROTOCOL_VERSION, ProtocolError } from "../backend/multiplayer/protocol.mjs";
-import { SIMULATION_CONSTANTS } from "../backend/multiplayer/simulation-v2.mjs";
+import { SIMULATION_CONSTANTS } from "../backend/multiplayer/simulation.mjs";
 
 await import("../frontend/js/snapshot-wire.js");
 
@@ -213,7 +213,7 @@ test("snapshots use one shared encoding per food kind and recover slow clients w
   assert.ok(manager.stats().bytes > 0);
 });
 
-test("the fixed-step accumulator emits every retained tick and clamps permanent catch-up debt", async t => {
+test("the fixed-step accumulator retains 60 Hz physics, emits 20 Hz snapshots and clamps catch-up debt", async t => {
   let currentTime = 5_000;
   const manager = new RoomManager({ now: () => currentTime });
   t.after(() => manager.close());
@@ -238,7 +238,7 @@ test("the fixed-step accumulator emits every retained tick and clamps permanent 
   assert.equal(manager.runRoomLoop(room, currentTime), 1);
   assert.equal(room.simulation.tick, 5);
   const ticks = host.messages.filter(message => message.type === "snapshot").map(message => message.tick);
-  assert.deepEqual(ticks, [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual(ticks, [0, 3]);
   assert.equal(manager.stats().tickDrift, 0);
 });
 

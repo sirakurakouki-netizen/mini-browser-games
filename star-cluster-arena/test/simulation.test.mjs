@@ -57,11 +57,18 @@ test("simulation preserves finite bounded entity state under load", () => {
 
 test("disconnected humans are controlled by AI and can reconnect", () => {
   const simulation = createSimulation(1234);
-  const group = simulation.groups.find(item => item.id === "player-a");
-  const before = simulation.groupCenter(group);
+  const center = snapshot => {
+    const group = snapshot.groups.find(item => item.id === "player-a");
+    const mass = group.cells.reduce((sum, cell) => sum + cell.mass, 0) || 1;
+    return {
+      x: group.cells.reduce((sum, cell) => sum + cell.x * cell.mass, 0) / mass,
+      y: group.cells.reduce((sum, cell) => sum + cell.y * cell.mass, 0) / mass
+    };
+  };
+  const before = center(simulation.snapshot());
   simulation.setConnected("player-a", false);
   for (let index = 0; index < 30; index += 1) simulation.step(1_000_000 + (index + 1) * 50);
-  const after = simulation.groupCenter(group);
+  const after = center(simulation.snapshot());
   assert.notDeepEqual({ x: before.x, y: before.y }, { x: after.x, y: after.y });
   simulation.setConnected("player-a", true);
   assert.equal(simulation.setInput("player-a", { seq: 100, dx: 1, dy: 0, split: false, eject: false }), true);

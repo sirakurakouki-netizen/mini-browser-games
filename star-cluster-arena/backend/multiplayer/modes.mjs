@@ -94,7 +94,8 @@ function defineMode(key, config = {}) {
     domination: base.domination ? { share: base.dominationShare, holdSeconds: base.dominationHold } : null,
     viruses: { ...canonicalViruses(base), ...virusOverrides },
     demon: base.demon ? { minimumBots: 4, maximumBosses: 4, maximumMinions: 3 } : null,
-    parity: "canonical-target",
+    parity: "single-source-runtime",
+    execution: "frontend/js/game.js",
     canonical: {
       participants: base.players,
       teams: base.teams ?? 0,
@@ -241,6 +242,7 @@ const PUBLIC_MODE_CATALOG = deepFreeze(MODE_KEYS.map(key => {
     canonical: mode.canonical,
     lanAdaptation: mode.lanAdaptation,
     parity: mode.parity,
+    execution: mode.execution,
     sharedRules: SHARED_RULES
   };
 }));

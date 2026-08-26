@@ -1,5 +1,7 @@
 # 星团大作战 v3.6 共享玩法内核与正式桌面发行 SDD
 
+> **历史计划，不代表完整执行层已经共享。** 后续实测确认单机 `game.js` 与联机 `simulation-v2.mjs` 仍是两套玩法执行器；以 [`SDD-CANONICAL-ENGINE-REBUILD-V3.8.md`](SDD-CANONICAL-ENGINE-REBUILD-V3.8.md) 的纠偏结论和门禁为准。
+
 ## 1. 文档状态
 
 - 目标版本：3.6.0
@@ -165,7 +167,7 @@ v3.6 不把联机继续当作独立玩法实现。唯一允许分离的是“权
 - GitHub Issues：`https://github.com/wangzifan396-wzf/mini-browser-games/issues`
 - QQ：`530142376`，必须支持复制；`tencent:` 打开失败时仍可复制
 - CSDN：`https://blog.csdn.net/m0_74023007`
-- 小黑盒：`https://www.xiaoheihe.cn/community/45509815`
+- 小黑盒：复制用户 ID `45509815`（原先误写的 `/community/45509815` 路径无效）
 - 哔哩哔哩：`https://space.bilibili.com/319363325`
 
 桌面主进程仅允许精确协议和域名白名单；浏览器使用普通外链。每次点击必须得到“已打开”“已复制”或失败提示，不允许静默无响应。
