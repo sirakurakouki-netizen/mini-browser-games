@@ -40,8 +40,8 @@ const portable = selectArtifact(files, ".zip", "便携版");
 if (!installer || (await stat(installer)).size < 1024 * 1024) throw new Error("没有找到有效的 NSIS 桌面安装程序");
 if (!portable || (await stat(portable)).size < 1024 * 1024) throw new Error("没有找到有效的桌面便携版压缩包");
 
-const installerTarget = join(versionRoot, `星团大作战-安装程序-${packageJson.version}-win-x64.exe`);
-const portableTarget = join(versionRoot, `星团大作战-便携版-${packageJson.version}-win-x64.zip`);
+const installerTarget = join(versionRoot, `StarClusterArena-Setup-${packageJson.version}-win-x64.exe`);
+const portableTarget = join(versionRoot, `StarClusterArena-Portable-${packageJson.version}-win-x64.zip`);
 await copyFile(installer, installerTarget);
 await copyFile(portable, portableTarget);
 
@@ -50,7 +50,7 @@ const checksums = [
   `${await sha256(portableTarget)}  ${basename(portableTarget)}`
 ];
 await writeFile(join(versionRoot, "SHA256SUMS.txt"), `${checksums.join("\r\n")}\r\n`, "utf8");
-await writeFile(join(versionRoot, "使用说明.txt"), [
+await writeFile(join(versionRoot, "README-WINDOWS.txt"), [
   `星团大作战 ${packageJson.version}（Windows x64）`,
   packageJson.version.includes("beta") ? "注意：这是联机测试版，不替代 v3.6.0 稳定版。玩法执行已经与单机同源；联机画面统一和实体双机十模式验收仍在继续。" : "",
   "",

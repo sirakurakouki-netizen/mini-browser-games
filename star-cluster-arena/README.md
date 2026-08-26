@@ -123,8 +123,8 @@ npm.cmd run make:desktop
 
 每个版本输出到独立目录。本次正式成品位于仓库顶层的 `star-cluster-arena-desktop/v4.0.0/`，其中：
 
-- `星团大作战-安装程序-4.0.0-win-x64.exe`：引导式安装，可选择安装位置，安装后从桌面或开始菜单启动游戏。
-- `星团大作战-便携版-4.0.0-win-x64.zip`：解压后双击目录内的 `StarClusterArena.exe`，不能只把 EXE 单独拷走。
+- `StarClusterArena-Setup-4.0.0-win-x64.exe`：引导式安装，可选择安装位置，安装后从桌面或开始菜单启动游戏。
+- `StarClusterArena-Portable-4.0.0-win-x64.zip`：解压后双击目录内的 `StarClusterArena.exe`，不能只把 EXE 单独拷走。
 - `SHA256SUMS.txt`：安装版和便携版的 SHA-256 校验值。
 
 源码检查与测试：
