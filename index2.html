@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mini-browser-games ランチャー</title>
+<style>
+  *{box-sizing:border-box}
+  :root{
+    --bg:#0d1117; --panel:#161b22; --card:#1a2029; --card-h:#222b36;
+    --border:#2d333b; --text:#e6edf3; --muted:#8b949e;
+    --accent:#58a6ff; --green:#3fb950;
+  }
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text); min-height:100vh;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",Meiryo,sans-serif;
+  }
+
+  header{
+    position:sticky; top:0; z-index:10;
+    background:rgba(13,17,23,.88); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border);
+    padding:14px 20px 12px;
+  }
+  .title-row{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:12px}
+  h1{font-size:18px; margin:0; letter-spacing:.3px}
+  h1 span{color:var(--accent)}
+  .count{font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums}
+
+  .controls{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+  .search{
+    flex:1 1 260px; min-width:200px;
+    background:var(--panel); border:1px solid var(--border); border-radius:8px;
+    color:var(--text); padding:9px 12px; font-size:14px; outline:none;
+  }
+  .search:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(88,166,255,.15)}
+  select, button{
+    background:var(--panel); border:1px solid var(--border); border-radius:8px;
+    color:var(--text); padding:9px 12px; font-size:13px; cursor:pointer;
+    font-family:inherit;
+  }
+  select:focus, button:focus{outline:none; border-color:var(--accent)}
+  button:hover, select:hover{border-color:#3d444d}
+  button.primary{border-color:var(--green); color:var(--green)}
+  button.primary:hover{background:rgba(63,185,80,.1)}
+
+  .basebar{
+    display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;
+    font-size:12px; color:var(--muted);
+  }
+  .basebar input{
+    flex:1 1 300px; min-width:180px;
+    background:var(--panel); border:1px solid var(--border); border-radius:6px;
+    color:var(--muted); padding:6px 10px; font-size:12px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; outline:none;
+  }
+  .basebar input:focus{color:var(--text); border-color:var(--accent)}
+
+  .chips{display:flex; gap:6px; flex-wrap:wrap; margin-top:12px}
+  .chip{
+    background:var(--panel); border:1px solid var(--border); border-radius:999px;
+    color:var(--muted); padding:5px 12px; font-size:12px; cursor:pointer;
+    transition:.15s; user-select:none; white-space:nowrap;
+  }
+  .chip:hover{color:var(--text); border-color:#3d444d}
+  .chip.on{background:rgba(88,166,255,.14); border-color:var(--accent); color:var(--accent)}
+
+  main{padding:20px}
+  .grid{
+    display:grid; gap:12px;
+    grid-template-columns:repeat(auto-fill, minmax(210px, 1fr));
+  }
+  .card{
+    position:relative; display:flex; flex-direction:column; gap:4px;
+    background:var(--card); border:1px solid var(--border); border-radius:10px;
+    padding:14px 14px 46px; text-decoration:none; color:inherit;
+    transition:transform .12s, border-color .12s, background .12s;
+    overflow:hidden;
+  }
+  .card::before{
+    content:""; position:absolute; inset:0 auto 0 0; width:3px;
+    background:var(--accent); opacity:0; transition:opacity .12s;
+  }
+  .card:hover{background:var(--card-h); border-color:#3d444d; transform:translateY(-2px)}
+  .card:hover::before{opacity:1}
+  .card:active{transform:translateY(0)}
+  .cat{font-size:10px; color:var(--muted); letter-spacing:.2px}
+  .name{font-size:15px; font-weight:600; line-height:1.3}
+  .file{font-size:10px; color:#5a626c; font-family:ui-monospace,Menlo,monospace; word-break:break-all}
+  .play{
+    position:absolute; left:14px; bottom:14px;
+    font-size:11px; color:var(--accent); font-weight:600; letter-spacing:.4px;
+    opacity:.65; transition:opacity .12s;
+  }
+  .card:hover .play{opacity:1}
+  .empty{color:var(--muted); font-size:14px; padding:40px 0; text-align:center; grid-column:1/-1}
+
+  footer{
+    color:var(--muted); font-size:11.5px; line-height:1.9;
+    padding:8px 20px 40px; max-width:900px;
+  }
+  footer code{
+    background:var(--panel); border:1px solid var(--border); border-radius:4px;
+    padding:1px 5px; font-size:11px;
+  }
+  @media (max-width:520px){
+    main{padding:14px}
+    .grid{grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px}
+    .card{padding:12px 12px 40px}
+    .name{font-size:13.5px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-row">
+    <h1>mini-browser-games <span>ランチャー</span></h1>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="controls">
+    <input class="search" id="search" type="search" placeholder="ゲーム名で検索…  （ / キーでフォーカス）" autocomplete="off">
+    <button id="random" class="primary">🎲 ランダム</button>
+  </div>
+
+  <div class="basebar">
+    <span>ベースURL</span>
+    <select id="preset">
+      <option value="pages">GitHub Pages</option>
+      <option value="local">ローカル（同じフォルダ）</option>
+    </select>
+    <input id="base" type="text" spellcheck="false">
+  </div>
+
+  <div class="chips" id="chips"></div>
+</header>
+
+<main>
+  <div class="grid" id="grid"></div>
+</main>
+
+<footer>
+  <strong>使い方</strong><br>
+  ・<code>GitHub Pages</code> を選ぶと <code>https://wangzifan396-wzf.github.io/mini-browser-games/</code> 経由で開きます。<br>
+  ・Pages が未設定で 404 になる場合は、この HTML をリポジトリの HTML 群と同じフォルダに置き、<code>ローカル（同じフォルダ）</code> を選んでください。<br>
+  ・ブラウザのポップアップブロックにより開けない場合は、ブロックを解除してください。<br>
+  ・ベースURLと検索条件は自動保存されます。
+</footer>
+
+<script>
+/* ============================================================
+   ゲーム一覧（リポジトリ直下の HTML ファイル 124 件）
+   ※ index.html はサイトのトップページなので除外
+   ============================================================ */
+const GAMES = [
+"abyss-sonar.html","air-hockey.html","air-traffic-control.html","alchemy-workshop.html",
+"auction-fever.html","auto-chess-forge.html","backpack-arena.html","ball-arena.html",
+"basin-control.html","battery-cycle.html","beat-bento.html","blackjack-table.html",
+"block-forge.html","bomb-grid.html","branching-tales.html","bytebot-lab.html",
+"chalk-billiards.html","charm-reels.html","checkpoint-inspector.html","chromatic-press.html",
+"chromatography-lab.html","cipher-relay.html","claw-carnival.html","clean-slate.html",
+"climbing-route.html","clockwork-escape.html","comet-weaver.html","connect-arena.html",
+"courier-grid.html","courtroom-clash.html","cozy-organizer.html","crossword-cafe.html",
+"curling-endgame.html","detective-desk.html","dice-delver.html","dojo-duel.html",
+"drift-racer.html","drone-survey.html","dungeon-delver.html","ecosystem-keeper.html",
+"elemental-sandbox.html","ember-tactics.html","fishing-harbor.html","flappy-glider.html",
+"fleet-duel.html","forest-dash.html","frequency-bureau.html","frontier-command.html",
+"fruit-slice.html","garden-front.html","gear-calibrator.html","gem-garden.html",
+"glyph-warden.html","hive-sovereign.html","island-survival.html","lantern-memory.html",
+"lockmaster-shift.html","mahjong-link.html","market-pulse.html","maze-chase.html",
+"merge-orbit.html","metro-weaver.html","midnight-chess.html","midnight-monitor.html",
+"mine-matrix.html","mist-valley-herbarium.html","moba-frontier.html","mole-market.html",
+"monster-horde.html","monster-tamer.html","moon-lander.html","mosaic-jigsaw.html",
+"museum-climate.html","neon-2048.html","noodle-shift.html","observatory-watch.html",
+"orbital-pinball.html","orbital-stowage.html","pathogen-protocol.html","penalty-rush.html",
+"photo-safari.html","pixel-clues.html","pocket-companion.html","pocket-empire.html",
+"pocket-farm.html","pocket-golf.html","prism-breaker.html","prism-orchard.html",
+"pulse-studio.html","radish-guard.html","relay-coordination.html","river-holdem.html",
+"runway-stylist.html","shadow-post.html","shan-hai.html","signal-caravan.html",
+"silent-rescue.html","sky-hop.html","skyline-planner.html","slingstorm.html",
+"snake-game.html","snow-ridge.html","sokoban-quest.html","solitaire-classic.html",
+"spectrum-console.html","spud-arena.html","stack-tower.html","starforge-idle.html",
+"starline-route.html","starship-suspects.html","stratigraphy-lab.html","sudoku-studio.html",
+"switchyard-rush.html","tank-arena.html","thunder-vanguard.html","tidal-grid.html",
+"tide-salvage.html","time-post.html","tiny-factory.html","touchline-manager.html",
+"truss-workshop.html","wind-tunnel-contracts.html","wonder-park.html","word-grid.html"
+];
+
+/* ============================================================
+   カテゴリ分類（ファイル名のキーワードで自動判定・上から順に一致）
+   ============================================================ */
+const CATEGORIES = [
+  { name:"🧩 パズル・ロジック", keys:[
+    "sokoban","sudoku","maze","cipher","crossword","mahjong","mosaic","jigsaw",
+    "pixel","mine","word-grid","connect-arena","bomb","lockmaster","tidal","clues",
+    "clean-slate","glyph","midnight-chess","checkpoint","time-post","lantern"
+  ]},
+  { name:"🃏 カード・テーブル", keys:[
+    "blackjack","solitaire","holdem","poker","charm-reels","mahjong-link","dice","auction"
+  ]},
+  { name:"🏃 アクション・アーケード", keys:[
+    "flappy","snake","ball-arena","tank","air-hockey","fruit-slice","penalty","sky-hop",
+    "slingstorm","prism-breaker","block-forge","air-traffic","drift-racer","forest-dash",
+    "radish-guard","monster-horde","dojo-duel","thunder-vanguard","spud-arena",
+    "orbital-pinball","backpack-arena","neon-2048","stack-tower","abyss-sonar",
+    "beat-bento","chalk-billiards","claw-carnival","moon-lander"
+  ]},
+  { name:"🏗️ ストラテジー・経営", keys:[
+    "factory","empire","farm","metro","skyline","frontier","hive","fleet","moba",
+    "auto-chess","ecosystem","garden","touchline","basin","courier","signal","relay",
+    "switchyard","market","starforge","wonder-park","pocket-","comet-weaver","merge-orbit"
+  ]},
+  { name:"🔬 科学・実験", keys:[
+    "alchemy","chromatography","stratigraphy","truss","wind-tunnel","observatory","gear",
+    "spectrum","chromatic","museum","battery","drone","frequency","bytebot","pathogen",
+    "mist-valley","pulse-studio","elemental-sandbox"
+  ]},
+  { name:"🗺️ アドベンチャー・RPG", keys:[
+    "dungeon","monster-tamer","shan-hai","branching","island-survival","detective",
+    "starship","cozy-organizer","runway","photo-safari","mole-market","crossword-cafe",
+    "courtroom-clash","fishing-harbor","ember-tactics","silent-rescue"
+  ]},
+  { name:"🏅 スポーツ・レース", keys:[
+    "golf","curling","climbing","snow-ridge"
+  ]}
+];
+const FALLBACK_CAT = "📦 その他";
+
+/* ============================================================
+   プリセット / 状態
+   ============================================================ */
+const PRESETS = {
+  pages: "https://wangzifan396-wzf.github.io/mini-browser-games/",
+  local: "./"
+};
+const LS_KEY = "mbg-launcher-v1";
+
+const state = {
+  base: PRESETS.pages,
+  q: "",
+  cat: "all"
+};
+
+/* 永続化の読み込み */
+try {
+  const saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+  if (saved.base) state.base = saved.base;
+  if (saved.cat)  state.cat  = saved.cat;
+} catch (e) { /* 無視 */ }
+
+function save() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify({ base: state.base, cat: state.cat })); } catch (e) {}
+}
+
+/* ============================================================
+   ユーティリティ
+   ============================================================ */
+function toTitle(file) {
+  return file
+    .replace(/\.html$/i, "")
+    .split("-")
+    .map(w => /^\d+$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function categorize(file) {
+  const n = file.toLowerCase();
+  for (const c of CATEGORIES) {
+    if (c.keys.some(k => n.includes(k))) return c.name;
+  }
+  return FALLBACK_CAT;
+}
+
+function normalizeBase(b) {
+  b = (b || "").trim();
+  if (!b) return PRESETS.pages;
+  return b.endsWith("/") ? b : b + "/";
+}
+
+function buildUrl(file) {
+  return normalizeBase(state.base) + file;
+}
+
+/* 事前計算 */
+const INDEX = GAMES.map(f => ({ file: f, name: toTitle(f), cat: categorize(f) }));
+const ALL_CATS = ["all", ...CATEGORIES.map(c => c.name), FALLBACK_CAT]
+  .filter(c => c === "all" || INDEX.some(g => g.cat === c));
+
+/* ============================================================
+   描画
+   ============================================================ */
+const gridEl   = document.getElementById("grid");
+const countEl  = document.getElementById("count");
+const searchEl = document.getElementById("search");
+const baseEl   = document.getElementById("base");
+const presetEl = document.getElementById("preset");
+const chipsEl  = document.getElementById("chips");
+
+function renderChips() {
+  chipsEl.innerHTML = ALL_CATS.map(c => {
+    const label = c === "all" ? "🌐 すべて" : c;
+    const on = state.cat === c ? " on" : "";
+    return `<div class="chip${on}" data-cat="${c}">${label}</div>`;
+  }).join("");
+}
+
+function render() {
+  const q = state.q.trim().toLowerCase();
+
+  const list = INDEX
+    .filter(g => state.cat === "all" || g.cat === state.cat)
+    .filter(g => !q || g.name.toLowerCase().includes(q) || g.file.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name, "en"));
+
+  countEl.textContent = `${list.length} / ${INDEX.length} 件`;
+
+  if (!list.length) {
+    gridEl.innerHTML = `<p class="empty">該当するゲームがありません。</p>`;
+    return;
+  }
+
+  gridEl.innerHTML = list.map(g => `
+    <a class="card" href="${buildUrl(g.file)}" target="_blank" rel="noopener noreferrer">
+      <span class="cat">${g.cat}</span>
+      <span class="name">${g.name}</span>
+      <span class="file">${g.file}</span>
+      <span class="play">▶ プレイ</span>
+    </a>
+  `).join("");
+}
+
+/* ============================================================
+   イベント
+   ============================================================ */
+searchEl.addEventListener("input", e => {
+  state.q = e.target.value;
+  render();
+});
+
+chipsEl.addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  state.cat = chip.dataset.cat;
+  save();
+  renderChips();
+  render();
+});
+
+presetEl.addEventListener("change", () => {
+  state.base = PRESETS[presetEl.value] || PRESETS.pages;
+  baseEl.value = state.base;
+  save();
+  render();
+});
+
+baseEl.addEventListener("input", e => {
+  state.base = e.target.value;
+  save();
+  render();
+});
+
+document.getElementById("random").addEventListener("click", () => {
+  const pool = INDEX
+    .filter(g => state.cat === "all" || g.cat === state.cat)
+    .filter(g => {
+      const q = state.q.trim().toLowerCase();
+      return !q || g.name.toLowerCase().includes(q) || g.file.toLowerCase().includes(q);
+    });
+  const target = pool.length ? pool : INDEX;
+  const pick = target[Math.floor(Math.random() * target.length)];
+  window.open(buildUrl(pick.file), "_blank", "noopener,noreferrer");
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "/" && document.activeElement !== searchEl && document.activeElement !== baseEl) {
+    e.preventDefault();
+    searchEl.focus();
+  }
+});
+
+/* ============================================================
+   初期化
+   ============================================================ */
+(function init() {
+  baseEl.value = state.base;
+  const isPreset = Object.values(PRESETS).some(p => normalizeBase(p) === normalizeBase(state.base));
+  presetEl.value = isPreset
+    ? (normalizeBase(state.base) === normalizeBase(PRESETS.local) ? "local" : "pages")
+    : "pages";
+  renderChips();
+  render();
+})();
+</script>
+</body>
+</html>
